@@ -1184,7 +1184,7 @@ function renderParticipantNombre(){
         <label for="pn-codigo">Tu código personal</label>
         <input type="text" id="pn-codigo" placeholder="Ej: K7X9QRT" style="text-transform:uppercase;" />
       </div>
-      <p class="footer-note">Usalo solo si ya participaste en este grupo antes y la app dejó de reconocerte (por ejemplo, después de una actualización). Con tu código recuperás tus conversaciones de todos los temas de este grupo de una sola vez. Si sos nuevo/a o no lo tenés a mano, dejá esto vacío: se te va a generar un código nuevo.</p>
+      <p class="footer-note">Usalo solo si ya participaste en este grupo antes y la app dejó de reconocerte (por ejemplo, después de una actualización). Al ponerlo, tu nombre se completa solo arriba — no hace falta que lo vuelvas a escribir. Con tu código recuperás tus conversaciones de todos los temas de este grupo de una sola vez. Si sos nuevo/a o no lo tenés a mano, dejá esto vacío: se te va a generar un código nuevo.</p>
     </div>
   `;
   document.getElementById('back').onclick = () => { state.view='role'; render(); };
@@ -1192,29 +1192,43 @@ function renderParticipantNombre(){
     const card = document.getElementById('pn-codigo-card');
     card.style.display = card.style.display === 'none' ? 'block' : 'none';
   };
+  document.getElementById('pn-codigo').addEventListener('blur', async () => {
+    const codigo = document.getElementById('pn-codigo').value.trim().toUpperCase();
+    if(!codigo) return;
+    const datos = await datosDeCodigoEnGrupo(codigo);
+    if(datos && datos.name) document.getElementById('pn-nombre').value = datos.name;
+  });
   const continuar = async () => {
-    const nombre = document.getElementById('pn-nombre').value.trim();
+    const nombreTipeado = document.getElementById('pn-nombre').value.trim();
     const codigoIngresado = document.getElementById('pn-codigo').value.trim().toUpperCase();
-    if(!nombre){ document.getElementById('pn-err').textContent = 'Contanos tu nombre para continuar.'; return; }
+    let nombreFinal = nombreTipeado;
     if(codigoIngresado){
       /* Se está reclamando una identidad ya existente, no registrando un
          nombre nuevo — no corresponde chequear disponibilidad de nombre
          (bloquearía a la persona con su propio nombre real) ni volver a
-         registrarlo. Sí conviene validar que el código exista de verdad. */
-      if(!(await codigoExisteEnGrupo(codigoIngresado))){
+         registrarlo. El nombre se recupera solo desde el código: no hace
+         falta que la persona lo vuelva a tipear. */
+      const datos = await datosDeCodigoEnGrupo(codigoIngresado);
+      if(!datos){
         document.getElementById('pn-err').textContent = 'Ese código no corresponde a ninguna conversación de este grupo. Revisalo, o dejá el campo vacío si sos nuevo/a.';
         return;
       }
+      nombreFinal = datos.name || nombreTipeado;
+      if(!nombreFinal){
+        document.getElementById('pn-err').textContent = 'No pudimos recuperar tu nombre con ese código. Escribilo en el campo de arriba.';
+        return;
+      }
     } else {
-      if(!(await nombreDisponibleEnGrupo(nombre))){
+      if(!nombreTipeado){ document.getElementById('pn-err').textContent = 'Contanos tu nombre para continuar.'; return; }
+      if(!(await nombreDisponibleEnGrupo(nombreTipeado))){
         document.getElementById('pn-err').textContent = 'Ese nombre ya está en uso en este grupo. Elegí otro.';
         return;
       }
-      await registrarNombreEnGrupo(nombre);
+      await registrarNombreEnGrupo(nombreTipeado);
     }
-    state.savedName = nombre;
+    state.savedName = nombreFinal;
     state.savedCodigo = codigoIngresado || genCodigoPersonal();
-    await storageSet('mi-perfil', JSON.stringify({ name: nombre, codigo: state.savedCodigo }), false);
+    await storageSet('mi-perfil', JSON.stringify({ name: nombreFinal, codigo: state.savedCodigo }), false);
     await loadTemas();
     await loadAjustes();
     for(const t of state.temas){ await cargarStatsTema(t); }
@@ -1373,9 +1387,18 @@ async function nombreDisponibleEnGrupo(nombre){
   return !lista.some(n => n.trim().toLowerCase() === buscado);
 }
 
-async function codigoExisteEnGrupo(codigo){
+/* Busca el nombre asociado a un código entre las conversaciones ya
+   guardadas del grupo (todas los incluyen), para no obligar a re-tipear
+   el nombre cuando ya se identificaron con su código. Devuelve null si el
+   código no corresponde a ninguna conversación real de este grupo. */
+async function datosDeCodigoEnGrupo(codigo){
   const keys = await storageList('conversacion:', true);
-  return keys.some(k => k.endsWith(':' + codigo));
+  const match = keys.find(k => k.endsWith(':' + codigo));
+  if(!match) return null;
+  const r = await storageGet(match, true);
+  let name = '';
+  if(r){ try{ name = JSON.parse(r.value).name || ''; }catch(e){} }
+  return { name };
 }
 
 async function registrarNombreEnGrupo(nombre){
