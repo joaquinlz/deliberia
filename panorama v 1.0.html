@@ -204,6 +204,20 @@ function esc(s){ return (s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;
 
 function uid(){ return 'p_' + Math.random().toString(36).slice(2,10); }
 
+/* Código personal: identifica a una persona en TODO el grupo (no por tema).
+   Es el mismo valor que se usa como participantId en cualquier tema, así que
+   con un solo código se recupera de una todo el historial de esa persona en
+   el grupo — no hace falta un código distinto por cada tema. Se guarda solo
+   (mi-perfil) mientras no haya una republicación del artifact de por medio;
+   si la hay, la persona puede volver a escribirlo una vez en la pantalla de
+   nombre para recuperar todo. */
+function genCodigoPersonal(){
+  const abc = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789'; // sin 0/O/1/I/L, para que sea fácil de anotar
+  let out = '';
+  for(let i=0;i<7;i++) out += abc[Math.floor(Math.random()*abc.length)];
+  return out;
+}
+
 async function callClaudeFull(messages, system, tools, maxTokens){
   const body = { model:"claude-sonnet-4-6", max_tokens: maxTokens || 1000, system: system, messages: messages };
   if(tools) body.tools = tools;
@@ -234,10 +248,47 @@ function calcularMaxTokensSintesis(textoLength){
   return 4000;
 }
 
-async function rawStorageGet(key, shared){ try{ return await window.storage.get(key, !!shared); }catch(e){ return null; } }
-async function rawStorageSet(key, value, shared){ try{ return await window.storage.set(key, value, !!shared); }catch(e){ return null; } }
-async function rawStorageList(prefix, shared){ try{ const r = await window.storage.list(prefix, !!shared); return r ? r.keys : []; }catch(e){ return []; } }
-async function rawStorageDelete(key, shared){ try{ await window.storage.delete(key, !!shared); }catch(e){} }
+/* Almacenamiento: los datos "shared" (de grupo: temas, conversaciones, votos,
+   síntesis) viajan a un Worker propio de Cloudflare con KV detrás, para que
+   sobrevivan a que este artifact se vuelva a publicar con un link nuevo.
+   Los datos "no shared" (perfil local, identidad para retomar conversación,
+   marca de creador, últimos grupos visitados) siguen usando window.storage
+   como antes: localStorage no funciona dentro del sandbox de artifacts de
+   claude.ai, así que no es una opción acá. Costo aceptado: esos datos
+   personales sí se reinician cada vez que se vuelve a publicar el artifact,
+   a diferencia de los datos de grupo. */
+const STORAGE_WORKER_URL = "https://panorama-storage.joaquinlocati.workers.dev";
+
+async function workerStorageCall(op, payload){
+  try{
+    const res = await fetch(STORAGE_WORKER_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ op, ...payload })
+    });
+    if(!res.ok) return null;
+    return await res.json();
+  }catch(e){ return null; }
+}
+
+async function rawStorageGet(key, shared){
+  if(!shared){ try{ return await window.storage.get(key, false); }catch(e){ return null; } }
+  const r = await workerStorageCall('get', { key });
+  return (r && r.value !== null && r.value !== undefined) ? { value: r.value } : null;
+}
+async function rawStorageSet(key, value, shared){
+  if(!shared){ try{ return await window.storage.set(key, value, false); }catch(e){ return null; } }
+  await workerStorageCall('set', { key, value });
+}
+async function rawStorageList(prefix, shared){
+  if(!shared){ try{ const r = await window.storage.list(prefix, false); return r ? r.keys : []; }catch(e){ return []; } }
+  const r = await workerStorageCall('list', { prefix });
+  return (r && r.keys) ? r.keys : [];
+}
+async function rawStorageDelete(key, shared){
+  if(!shared){ try{ await window.storage.delete(key, false); }catch(e){} return; }
+  await workerStorageCall('delete', { key });
+}
 
 /* Todas las claves de datos de un espacio quedan prefijadas automáticamente con su código,
    así el resto del código (temas, conversaciones, síntesis, perfiles) no necesita saber
@@ -1098,8 +1149,10 @@ function renderAccesoPin(){
     if(!ok){ document.getElementById('ap-err').textContent = 'PIN incorrecto.'; return; }
     state.accesoDesbloqueado = true;
     const perfilR = await storageGet('mi-perfil', false);
-    state.savedName = perfilR ? (JSON.parse(perfilR.value).name || '') : '';
-    if(!state.savedName){
+    const perfil = perfilR ? JSON.parse(perfilR.value) : null;
+    state.savedName = perfil ? (perfil.name || '') : '';
+    state.savedCodigo = perfil ? (perfil.codigo || '') : '';
+    if(!state.savedName || !state.savedCodigo){
       state.view = 'p-nombre'; render(); return;
     }
     await loadTemas();
@@ -1125,25 +1178,66 @@ function renderParticipantNombre(){
       <button class="btn btn-primary" id="pn-continuar">Continuar</button>
       <div class="err" id="pn-err"></div>
     </div>
+    <p class="footer-note" id="pn-toggle-codigo" style="cursor:pointer; text-decoration:underline;">¿Ya participaste antes en este grupo? Ingresá tu código personal</p>
+    <div class="card" id="pn-codigo-card" style="display:none;">
+      <div class="field">
+        <label for="pn-codigo">Tu código personal</label>
+        <input type="text" id="pn-codigo" placeholder="Ej: K7X9QRT" style="text-transform:uppercase;" />
+      </div>
+      <p class="footer-note">Usalo solo si ya participaste en este grupo antes y la app dejó de reconocerte (por ejemplo, después de una actualización). Al ponerlo, tu nombre se completa solo arriba — no hace falta que lo vuelvas a escribir. Con tu código recuperás tus conversaciones de todos los temas de este grupo de una sola vez. Si sos nuevo/a o no lo tenés a mano, dejá esto vacío: se te va a generar un código nuevo.</p>
+    </div>
   `;
   document.getElementById('back').onclick = () => { state.view='role'; render(); };
+  document.getElementById('pn-toggle-codigo').onclick = () => {
+    const card = document.getElementById('pn-codigo-card');
+    card.style.display = card.style.display === 'none' ? 'block' : 'none';
+  };
+  document.getElementById('pn-codigo').addEventListener('blur', async () => {
+    const codigo = document.getElementById('pn-codigo').value.trim().toUpperCase();
+    if(!codigo) return;
+    const datos = await datosDeCodigoEnGrupo(codigo);
+    if(datos && datos.name) document.getElementById('pn-nombre').value = datos.name;
+  });
   const continuar = async () => {
-    const nombre = document.getElementById('pn-nombre').value.trim();
-    if(!nombre){ document.getElementById('pn-err').textContent = 'Contanos tu nombre para continuar.'; return; }
-    if(!(await nombreDisponibleEnGrupo(nombre))){
-      document.getElementById('pn-err').textContent = 'Ese nombre ya está en uso en este grupo. Elegí otro.';
-      return;
+    const nombreTipeado = document.getElementById('pn-nombre').value.trim();
+    const codigoIngresado = document.getElementById('pn-codigo').value.trim().toUpperCase();
+    let nombreFinal = nombreTipeado;
+    if(codigoIngresado){
+      /* Se está reclamando una identidad ya existente, no registrando un
+         nombre nuevo — no corresponde chequear disponibilidad de nombre
+         (bloquearía a la persona con su propio nombre real) ni volver a
+         registrarlo. El nombre se recupera solo desde el código: no hace
+         falta que la persona lo vuelva a tipear. */
+      const datos = await datosDeCodigoEnGrupo(codigoIngresado);
+      if(!datos){
+        document.getElementById('pn-err').textContent = 'Ese código no corresponde a ninguna conversación de este grupo. Revisalo, o dejá el campo vacío si sos nuevo/a.';
+        return;
+      }
+      nombreFinal = datos.name || nombreTipeado;
+      if(!nombreFinal){
+        document.getElementById('pn-err').textContent = 'No pudimos recuperar tu nombre con ese código. Escribilo en el campo de arriba.';
+        return;
+      }
+    } else {
+      if(!nombreTipeado){ document.getElementById('pn-err').textContent = 'Contanos tu nombre para continuar.'; return; }
+      if(!(await nombreDisponibleEnGrupo(nombreTipeado))){
+        document.getElementById('pn-err').textContent = 'Ese nombre ya está en uso en este grupo. Elegí otro.';
+        return;
+      }
+      await registrarNombreEnGrupo(nombreTipeado);
     }
-    await registrarNombreEnGrupo(nombre);
-    state.savedName = nombre;
-    await storageSet('mi-perfil', JSON.stringify({ name: nombre }), false);
+    state.savedName = nombreFinal;
+    state.savedCodigo = codigoIngresado || genCodigoPersonal();
+    await storageSet('mi-perfil', JSON.stringify({ name: nombreFinal, codigo: state.savedCodigo }), false);
     await loadTemas();
     await loadAjustes();
     for(const t of state.temas){ await cargarStatsTema(t); }
+    if(!codigoIngresado) state.mostrarCodigoNuevo = state.savedCodigo;
     state.view = 'p-topics'; render();
   };
   document.getElementById('pn-continuar').onclick = continuar;
   document.getElementById('pn-nombre').addEventListener('keydown', (e) => { if(e.key==='Enter') continuar(); });
+  document.getElementById('pn-codigo').addEventListener('keydown', (e) => { if(e.key==='Enter') continuar(); });
 }
 
 function renderRole(){
@@ -1173,8 +1267,10 @@ function renderRole(){
       state.view = 'p-acceso-pin'; render(); return;
     }
     const perfilR = await storageGet('mi-perfil', false);
-    state.savedName = perfilR ? (JSON.parse(perfilR.value).name || '') : '';
-    if(!state.savedName){
+    const perfil = perfilR ? JSON.parse(perfilR.value) : null;
+    state.savedName = perfil ? (perfil.name || '') : '';
+    state.savedCodigo = perfil ? (perfil.codigo || '') : '';
+    if(!state.savedName || !state.savedCodigo){
       state.view = 'p-nombre'; render(); return;
     }
     await loadTemas();
@@ -1222,6 +1318,13 @@ function renderParticipantTopics(){
     <a class="back" id="back">← volver</a>
     <p class="eyebrow" style="margin-top:18px;">Temas del grupo</p>
     <h1>Elegí un tema</h1>
+    ${state.mostrarCodigoNuevo ? `
+    <div class="card" id="codigo-nuevo-banner" style="border-color: var(--gold);">
+      <p style="margin-top:0;"><b>Guardá tu código personal:</b> <span style="font-family:'IBM Plex Mono', monospace; font-size:18px; letter-spacing:.05em;">${esc(state.mostrarCodigoNuevo)}</span></p>
+      <p class="footer-note" style="margin-bottom:4px;">¿Para qué sirve? Normalmente no vas a necesitarlo — la app te reconoce sola cada vez que volvés. Sirve solo como respaldo: si alguna vez, después de una actualización de la app, te vuelve a preguntar tu nombre como si fueras nuevo/a, vas a poder ingresar este código para recuperar todas tus conversaciones de este grupo tal como las dejaste.</p>
+      <p class="footer-note" style="margin-bottom:12px;">Guardalo en algún lado que no se pierda (notas del celular, un mensaje a vos mismo/a) antes de seguir.</p>
+      <button class="btn btn-ghost btn-sm" id="codigo-nuevo-ok">Ya lo anoté</button>
+    </div>` : ''}
     <div class="field">
       <input type="text" id="buscar-tema" placeholder="Buscar por título o descripción…" value="${esc(state.filtroTemas||'')}" />
     </div>
@@ -1237,6 +1340,8 @@ function renderParticipantTopics(){
     <div>${items}</div>
   `;
   document.getElementById('back').onclick = () => { state.view='role'; render(); };
+  const codigoOk = document.getElementById('codigo-nuevo-ok');
+  if(codigoOk) codigoOk.onclick = () => { state.mostrarCodigoNuevo = null; renderParticipantTopics(); };
   const buscar = document.getElementById('buscar-tema');
   buscar.addEventListener('input', () => { state.filtroTemas = buscar.value; renderParticipantTopics(); setTimeout(()=>{ const el=document.getElementById('buscar-tema'); if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length);} },0); });
   document.getElementById('orden-tema').addEventListener('change', (e) => { state.ordenTemas = e.target.value; renderParticipantTopics(); });
@@ -1246,29 +1351,23 @@ function renderParticipantTopics(){
     const tema = state.temas.find(t => t.id === b.dataset.id);
     state.temaActual = tema;
     state.groupContextText = '';
-    const identidad = await tryResumirIdentidad(tema.id);
-    if(identidad){
-      state.participantId = identidad.participantId;
-      state.participantName = identidad.name;
-      const convR = await storageGet('conversacion:' + tema.id + ':' + identidad.participantId, true);
-      state.messages = convR ? (JSON.parse(convR.value).messages || []) : [];
-      state.resumed = true;
-      await cargarEncuestaEstado();
-      state.view = 'p-chat'; render();
-      if(state.messages.length === 0) await sendToAI(null);
-    } else if(state.savedName){
-      state.participantName = state.savedName;
-      state.participantId = uid();
-      state.messages = [];
-      await storageSet('mi-identidad:' + tema.id, JSON.stringify({ participantId: state.participantId, name: state.savedName }), false);
-      await cargarEncuestaEstado();
-      state.resumed = false;
-      state.view = 'p-chat'; render();
-      await sendToAI(null);
-    } else {
+    if(!state.savedName || !state.savedCodigo){
       state.resumed = false;
       state.view = 'p-start'; render();
+      return;
     }
+    /* El código personal ES el participantId en cualquier tema del grupo:
+       con un solo código guardado (o reingresado tras una republicación) se
+       recupera la conversación en cualquier tema, sin identidades sueltas
+       por tema. */
+    state.participantId = state.savedCodigo;
+    state.participantName = state.savedName;
+    const convR = await storageGet('conversacion:' + tema.id + ':' + state.participantId, true);
+    state.messages = convR ? (JSON.parse(convR.value).messages || []) : [];
+    state.resumed = state.messages.length > 0;
+    await cargarEncuestaEstado();
+    state.view = 'p-chat'; render();
+    if(state.messages.length === 0) await sendToAI(null);
   });
   document.querySelectorAll('.tema-registro').forEach(b => b.onclick = async () => {
     const tema = state.temas.find(t => t.id === b.dataset.id);
@@ -1288,17 +1387,25 @@ async function nombreDisponibleEnGrupo(nombre){
   return !lista.some(n => n.trim().toLowerCase() === buscado);
 }
 
+/* Busca el nombre asociado a un código entre las conversaciones ya
+   guardadas del grupo (todas los incluyen), para no obligar a re-tipear
+   el nombre cuando ya se identificaron con su código. Devuelve null si el
+   código no corresponde a ninguna conversación real de este grupo. */
+async function datosDeCodigoEnGrupo(codigo){
+  const keys = await storageList('conversacion:', true);
+  const match = keys.find(k => k.endsWith(':' + codigo));
+  if(!match) return null;
+  const r = await storageGet(match, true);
+  let name = '';
+  if(r){ try{ name = JSON.parse(r.value).name || ''; }catch(e){} }
+  return { name };
+}
+
 async function registrarNombreEnGrupo(nombre){
   const r = await storageGet('nombres-registrados', true);
   const lista = r ? JSON.parse(r.value) : [];
   lista.push(nombre.trim());
   await storageSet('nombres-registrados', JSON.stringify(lista), true);
-}
-
-async function tryResumirIdentidad(temaId){
-  const r = await storageGet('mi-identidad:' + temaId, false);
-  if(!r) return null;
-  try{ return JSON.parse(r.value); }catch(e){ return null; }
 }
 
 function renderParticipantNuevoTema(){
@@ -1330,7 +1437,8 @@ function renderParticipantNuevoTema(){
     const titulo = document.getElementById('np-titulo').value.trim();
     const descripcion = document.getElementById('np-desc').value.trim();
     if(!nombre || !titulo){ document.getElementById('np-err').textContent = 'Necesitamos tu nombre y un título para el tema.'; return; }
-    await storageSet('mi-perfil', JSON.stringify({ name: nombre }), false);
+    if(!state.savedCodigo) state.savedCodigo = genCodigoPersonal();
+    await storageSet('mi-perfil', JSON.stringify({ name: nombre, codigo: state.savedCodigo }), false);
     state.savedName = nombre;
     const nuevo = {
       id: uid(), titulo, descripcion, estado:'activo', creado: Date.now(), _count:0,
@@ -1409,11 +1517,12 @@ function renderParticipantStart(){
       return;
     }
     await registrarNombreEnGrupo(name);
+    state.savedName = name;
     state.participantName = name;
-    state.participantId = uid();
+    if(!state.savedCodigo) state.savedCodigo = genCodigoPersonal();
+    state.participantId = state.savedCodigo;
     state.messages = [];
-    await storageSet('mi-identidad:' + state.temaActual.id, JSON.stringify({ participantId: state.participantId, name }), false);
-    await storageSet('mi-perfil', JSON.stringify({ name }), false);
+    await storageSet('mi-perfil', JSON.stringify({ name, codigo: state.savedCodigo }), false);
     await cargarEncuestaEstado();
     state.view = 'p-chat';
     render();
