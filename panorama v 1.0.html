@@ -1,0 +1,2201 @@
+<!doctype html>
+<!--
+  Panorama IA — herramienta de deliberación colectiva asistida por IA.
+  Código abierto: libre de usar, modificar y reutilizar, "tal cual", sin garantías de ningún tipo.
+
+  Quien despliega un grupo (o una copia de esta app) es responsable de su propio espacio, de
+  cómo modera y del uso que le da su comunidad. No existe una administración central con
+  control sobre grupos ajenos. Si esta app se conecta a la API de Anthropic, ese uso queda
+  sujeto a las políticas de uso de Anthropic. Quien la conecte a otro proveedor de IA o la
+  aloje por su cuenta asume la responsabilidad legal y ética de ese uso; el autor original
+  de este código no se hace responsable por usos indebidos de versiones modificadas o
+  alojadas por terceros.
+-->
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Panorama IA — deliberación asistida</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,600;9..144,700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg: #12212B;
+    --bg-raised: #172A35;
+    --ink: #EFE8DA;
+    --ink-dim: #9FB0B4;
+    --gold: #C9A24B;
+    --teal: #5FA8A0;
+    --clay: #B5652E;
+    --line: rgba(239,232,218,0.14);
+    --danger: #C1583F;
+  }
+  *{ box-sizing:border-box; }
+  html,body{ height:100%; }
+  body{
+    margin:0;
+    background:
+      radial-gradient(1100px 600px at 15% -10%, rgba(95,168,160,0.10), transparent 60%),
+      radial-gradient(900px 500px at 100% 0%, rgba(201,162,75,0.08), transparent 55%),
+      var(--bg);
+    color: var(--ink);
+    font-family: 'Inter', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100%;
+  }
+  .wrap{ max-width: 720px; margin: 0 auto; padding: 48px 24px 80px; }
+  .eyebrow{
+    font-family:'IBM Plex Mono', monospace; font-size:12px; letter-spacing:.14em;
+    text-transform:uppercase; color: var(--teal); margin:0 0 10px;
+  }
+  h1{
+    font-family:'Fraunces', serif; font-weight:600; font-size: 34px; line-height:1.15;
+    margin:0 0 8px; color: var(--ink);
+  }
+  .brand-title{
+    font-family:'Fraunces', serif; font-weight:700; font-size: 56px; line-height:0.98;
+    letter-spacing:-0.01em; margin:0 0 18px; color: var(--ink);
+  }
+  .brand-title .accent{ color: var(--gold); }
+  @media (max-width:560px){ .brand-title{ font-size:42px; } }
+  .sub{ color: var(--ink-dim); font-size:15px; line-height:1.6; margin:0 0 32px; max-width:56ch;}
+  .card{
+    background: var(--bg-raised); border:1px solid var(--line); border-radius: 14px;
+    padding: 28px; margin-bottom:20px;
+  }
+  .btn{
+    font-family:'Inter',sans-serif; font-weight:600; font-size:14.5px; cursor:pointer;
+    border-radius: 9px; padding: 13px 22px; border:1px solid transparent;
+    transition: transform .12s ease, opacity .12s ease; display:inline-flex; align-items:center; gap:8px;
+  }
+  .btn:active{ transform: scale(0.98); }
+  .btn-primary{ background: var(--gold); color:#1B140A; }
+  .btn-primary:hover{ opacity:.92; }
+  .btn-ghost{ background:transparent; color: var(--ink); border-color: var(--line); }
+  .btn-ghost:hover{ border-color: var(--ink-dim); }
+  .btn-teal{ background: rgba(95,168,160,0.16); color: var(--teal); border-color: rgba(95,168,160,0.35); }
+  .btn-teal:hover{ opacity:.9; }
+  .btn-clay{ background: rgba(181,101,46,0.16); color: var(--clay); border-color: rgba(181,101,46,0.35); }
+  .btn-clay:hover{ opacity:.9; }
+  .btn-danger{ background:transparent; color: var(--danger); border-color: rgba(193,88,63,0.4); }
+  .btn-sm{ padding:8px 14px; font-size:13px; }
+  .btn:disabled{ opacity:.35; cursor:default; }
+  .role-grid{ display:grid; grid-template-columns: 1fr 1fr; gap:16px; }
+  @media (max-width:560px){ .role-grid{ grid-template-columns: 1fr; } }
+  .role-card{
+    background: var(--bg-raised); border:1px solid var(--line); border-radius:14px;
+    padding:26px; cursor:pointer; text-align:left; color:var(--ink); font-family:'Inter',sans-serif;
+    transition: border-color .15s ease, transform .15s ease;
+  }
+  .role-card:hover{ border-color: var(--gold); transform: translateY(-2px); }
+  .role-card .tag{ font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--teal); letter-spacing:.1em; text-transform:uppercase;}
+  .role-card h3{ font-family:'Fraunces',serif; font-size:21px; margin:8px 0 6px; font-weight:600;}
+  .role-card p{ color:var(--ink-dim); font-size:13.5px; line-height:1.5; margin:0;}
+  input[type=text], textarea{
+    width:100%; background: rgba(0,0,0,0.18); border:1px solid var(--line); border-radius:9px;
+    padding:12px 14px; color:var(--ink); font-family:'Inter',sans-serif; font-size:15px;
+    resize:none; outline:none;
+  }
+  input[type=text]:focus, textarea:focus{ border-color: var(--gold); }
+  label{ font-family:'IBM Plex Mono',monospace; font-size:11px; letter-spacing:.08em; text-transform:uppercase; color:var(--ink-dim); display:block; margin-bottom:8px; }
+  .field{ margin-bottom:18px; }
+  .topic-banner{
+    font-family:'Fraunces',serif; font-style:italic; font-size:16.5px; line-height:1.5;
+    color: var(--ink); background: rgba(201,162,75,0.08); border-left:3px solid var(--gold);
+    padding:14px 18px; border-radius:0 8px 8px 0; margin-bottom:24px;
+  }
+  .chat-log{ display:flex; flex-direction:column; gap:14px; margin-bottom:18px; max-height:52vh; overflow-y:auto; padding-right:4px;}
+  .msg{ max-width:82%; padding:12px 15px; border-radius:12px; font-size:14.5px; line-height:1.55; }
+  .msg.ai{ background: rgba(95,168,160,0.10); border:1px solid rgba(95,168,160,0.22); align-self:flex-start; border-bottom-left-radius:3px;}
+  .msg.user{ background: rgba(201,162,75,0.14); border:1px solid rgba(201,162,75,0.28); align-self:flex-end; border-bottom-right-radius:3px;}
+  .msg.typing{ color:var(--ink-dim); font-style:italic; }
+  .msg.panorama{ max-width:100%; align-self:stretch; background: rgba(181,101,46,0.10); border:1px solid rgba(181,101,46,0.32); }
+  .msg.panorama .ptitle{ font-family:'IBM Plex Mono',monospace; font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--clay); margin-bottom:8px; display:block;}
+  .chat-input-row{ display:flex; gap:10px; align-items:flex-end; }
+  .chat-input-row textarea{ flex:1; min-height:48px; max-height:120px; }
+  .chat-actions{ display:flex; gap:10px; margin-bottom:16px; flex-wrap:wrap; }
+  .stat-row{ display:flex; gap:28px; margin-bottom:8px; flex-wrap:wrap; }
+  .stat{ font-family:'IBM Plex Mono',monospace; }
+  .stat .n{ font-size:28px; color:var(--gold); display:block; }
+  .stat .l{ font-size:11px; color:var(--ink-dim); text-transform:uppercase; letter-spacing:.08em; }
+  .divider{ border:none; border-top:1px solid var(--line); margin:28px 0; }
+  .synth-block{ margin-bottom:26px; }
+  .synth-block h3{ font-family:'Fraunces',serif; font-size:18px; color:var(--gold); margin:0 0 12px; font-weight:600;}
+  .synth-block ul{ margin:0; padding-left:20px; }
+  .synth-block li{ margin-bottom:9px; line-height:1.55; font-size:14.5px; }
+  .proposal{ background: rgba(0,0,0,0.16); border:1px solid var(--line); border-radius:10px; padding:14px 16px; margin-bottom:10px;}
+  .proposal .t{ font-weight:600; margin-bottom:4px; }
+  .proposal .names{ font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--teal); margin-top:8px; }
+  .top-nav{ display:flex; justify-content:space-between; align-items:center; margin-bottom:28px; }
+  .back{ font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--ink-dim); cursor:pointer; text-decoration:none; }
+  .back:hover{ color:var(--ink); }
+  .err{ color:var(--danger); font-size:13.5px; margin-top:10px; }
+  .ok{ color:var(--teal); font-size:13.5px; margin-top:10px; }
+  .empty{ color:var(--ink-dim); font-size:14px; font-style:italic; }
+  .footer-note{ color:var(--ink-dim); font-size:12px; margin-top:36px; line-height:1.6; }
+  .tema-item{ background:var(--bg-raised); border:1px solid var(--line); border-radius:12px; padding:18px 20px; margin-bottom:12px; }
+  .tema-item.disabled{ opacity:.55; }
+  .tema-item .row1{ display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
+  .tema-item h4{ font-family:'Fraunces',serif; font-size:18px; margin:0 0 6px; font-weight:600; }
+  .tema-item .desc{ color:var(--ink-dim); font-size:13.5px; line-height:1.5; margin:0 0 10px; }
+  .tema-item .meta{ font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--ink-dim); display:flex; gap:14px; align-items:center; flex-wrap:wrap;}
+  .badge{ font-family:'IBM Plex Mono',monospace; font-size:10.5px; text-transform:uppercase; letter-spacing:.06em; padding:3px 9px; border-radius:20px; }
+  .badge.activo{ background:rgba(95,168,160,0.18); color:var(--teal); }
+  .badge.pausado{ background:rgba(201,162,75,0.18); color:var(--gold); }
+  .badge.terminado{ background:rgba(159,176,180,0.14); color:var(--ink-dim); }
+  .badge.oficial{ background:rgba(95,168,160,0.14); color:var(--teal); }
+  .badge.comunidad{ background:rgba(181,101,46,0.14); color:var(--clay); }
+  .toggle-row{ display:flex; align-items:center; gap:10px; font-size:14px; margin-bottom:14px; cursor:pointer; }
+  .toggle-row:last-child{ margin-bottom:0; }
+  .toggle-row input{ width:16px; height:16px; accent-color: var(--gold); }
+  .select-orden{
+    width:100%; background: rgba(0,0,0,0.18); border:1px solid var(--line); border-radius:9px;
+    padding:11px 14px; color:var(--ink); font-family:'Inter',sans-serif; font-size:14.5px; outline:none;
+  }
+  .select-orden:focus{ border-color: var(--gold); }
+  .encuesta-card{ margin-top:20px; }
+  .encuesta-opcion{
+    position:relative; display:flex; align-items:center; gap:10px; width:100%; text-align:left;
+    background: rgba(0,0,0,0.16); border:1px solid var(--line); border-radius:9px;
+    padding:11px 14px; margin-bottom:8px; cursor:pointer; color:var(--ink);
+    font-family:'Inter',sans-serif; font-size:14px; overflow:hidden;
+  }
+  .encuesta-opcion.marcada{ border-color: var(--gold); }
+  .encuesta-opcion .eo-bar{ position:absolute; left:0; top:0; bottom:0; background: rgba(201,162,75,0.14); z-index:0; transition: width .3s ease; }
+  .encuesta-opcion .eo-check, .encuesta-opcion .eo-texto, .encuesta-opcion .eo-pct{ position:relative; z-index:1; }
+  .encuesta-opcion .eo-check{ width:14px; flex:none; color: var(--gold); font-weight:700; }
+  .encuesta-opcion .eo-texto{ flex:1; }
+  .encuesta-opcion .eo-pct{ font-family:'IBM Plex Mono',monospace; font-size:12px; color:var(--ink-dim); flex:none; }
+  .cmp-wrap{ overflow-x:auto; }
+  .cmp-table{ border-collapse:collapse; width:100%; min-width:420px; }
+  .cmp-table th, .cmp-table td{ border:1px solid var(--line); padding:10px 14px; text-align:left; font-size:13.5px; vertical-align:top; }
+  .cmp-table th{ font-family:'Fraunces',serif; color:var(--gold); background: rgba(201,162,75,0.06); font-size:15px; }
+  .cmp-table td:first-child{ font-family:'IBM Plex Mono',monospace; font-size:11px; text-transform:uppercase; color:var(--ink-dim); white-space:nowrap; }
+  .cmp-table .names{ font-family:'IBM Plex Mono',monospace; font-size:11.5px; color:var(--teal); }
+  .tema-actions{ display:flex; gap:8px; margin-top:12px; flex-wrap:wrap; }
+  .step{ display:flex; gap:14px; align-items:flex-start; margin-bottom:16px; }
+  .step:last-child{ margin-bottom:0; }
+  .step-n{
+    flex:none; width:26px; height:26px; border-radius:50%; background: rgba(201,162,75,0.16);
+    color: var(--gold); font-family:'IBM Plex Mono',monospace; font-size:12.5px; font-weight:600;
+    display:flex; align-items:center; justify-content:center; margin-top:1px;
+  }
+  .step p{ margin:0; font-size:14.5px; line-height:1.55; color: var(--ink); }
+  .btn-cta{ width:100%; justify-content:center; padding:17px 22px; font-size:16px; margin-bottom:10px; }
+  .mod-access{ margin-top:44px; padding-top:20px; border-top:1px solid var(--line); text-align:center; }
+</style>
+</head>
+<body>
+<div class="wrap" id="app"></div>
+<div style="position:fixed; bottom:6px; right:10px; font-family:'IBM Plex Mono',monospace; font-size:10px; color:rgba(159,176,180,0.35); z-index:9999;">Panorama IA v1.0</div>
+
+<script>
+const app = document.getElementById('app');
+let state = {
+  view: 'landing',
+  workspaceId: null, workspaceMeta: null, errorLanding: '',
+  temas: [],
+  temaActual: null,
+  participantName: '', participantId: null, messages: [], groupContextText: '',
+  busy: false, error: '', synth: null, count: 0
+};
+
+function esc(s){ return (s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+
+function uid(){ return 'p_' + Math.random().toString(36).slice(2,10); }
+
+async function callClaudeFull(messages, system, tools, maxTokens){
+  const body = { model:"claude-sonnet-4-6", max_tokens: maxTokens || 1000, system: system, messages: messages };
+  if(tools) body.tools = tools;
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method:"POST",
+    headers:{ "Content-Type":"application/json" },
+    body: JSON.stringify(body)
+  });
+  if(!res.ok){
+    let detail = '';
+    try{ const b = await res.json(); detail = (b && b.error && b.error.message) || JSON.stringify(b); }catch(e){ detail = await res.text().catch(()=> ''); }
+    throw new Error("api_error_" + res.status + (detail ? ": " + detail : ""));
+  }
+  return await res.json();
+}
+
+async function callClaude(messages, system, tools, maxTokens){
+  const data = await callClaudeFull(messages, system, tools, maxTokens);
+  return (data.content || []).map(b => b.text || '').join('');
+}
+
+function calcularMaxTokensSintesis(textoLength){
+  // Escala el margen de respuesta según cuánto texto hay para leer y sintetizar,
+  // para no gastar espacio de más en temas chicos ni quedarse corto en temas grandes.
+  if(textoLength < 4000) return 1000;
+  if(textoLength < 12000) return 2000;
+  if(textoLength < 30000) return 3000;
+  return 4000;
+}
+
+async function rawStorageGet(key, shared){ try{ return await window.storage.get(key, !!shared); }catch(e){ return null; } }
+async function rawStorageSet(key, value, shared){ try{ return await window.storage.set(key, value, !!shared); }catch(e){ return null; } }
+async function rawStorageList(prefix, shared){ try{ const r = await window.storage.list(prefix, !!shared); return r ? r.keys : []; }catch(e){ return []; } }
+async function rawStorageDelete(key, shared){ try{ await window.storage.delete(key, !!shared); }catch(e){} }
+
+/* Todas las claves de datos de un espacio quedan prefijadas automáticamente con su código,
+   así el resto del código (temas, conversaciones, síntesis, perfiles) no necesita saber
+   que existen múltiples espacios aislados: solo opera "dentro" del suyo. */
+function wsPrefix(){ return 'ws:' + (state.workspaceId || 'default') + ':'; }
+async function storageGet(key, shared){ return rawStorageGet(wsPrefix() + key, shared); }
+async function storageSet(key, value, shared){ return rawStorageSet(wsPrefix() + key, value, shared); }
+async function storageList(prefix, shared){
+  const keys = await rawStorageList(wsPrefix() + prefix, shared);
+  const p = wsPrefix();
+  return keys.map(k => k.startsWith(p) ? k.slice(p.length) : k);
+}
+async function storageDelete(key, shared){ return rawStorageDelete(wsPrefix() + key, shared); }
+
+async function otroGrupoGet(codigo, key, shared){ return rawStorageGet('ws:' + codigo + ':' + key, shared); }
+async function otroGrupoSet(codigo, key, value, shared){ return rawStorageSet('ws:' + codigo + ':' + key, value, shared); }
+async function otroGrupoList(codigo, prefix, shared){
+  const keys = await rawStorageList('ws:' + codigo + ':' + prefix, shared);
+  const p = 'ws:' + codigo + ':';
+  return keys.map(k => k.startsWith(p) ? k.slice(p.length) : k);
+}
+
+async function listarGruposPublicos(){
+  const keys = await rawStorageList('wsmeta:', true);
+  const grupos = [];
+  for(const k of keys){
+    const r = await rawStorageGet(k, true);
+    if(!r) continue;
+    let meta; try{ meta = JSON.parse(r.value); }catch(e){ continue; }
+    if(!meta.publico) continue;
+    const codigo = k.slice('wsmeta:'.length);
+    const temasR = await otroGrupoGet(codigo, 'config:temas', true);
+    const temas = temasR ? JSON.parse(temasR.value) : [];
+    let participaciones = 0, ultimaActividad = 0;
+    for(const t of temas){
+      const claves = await otroGrupoList(codigo, 'conversacion:' + t.id + ':', true);
+      participaciones += claves.length;
+      if(t.ultimaActividad && t.ultimaActividad > ultimaActividad) ultimaActividad = t.ultimaActividad;
+    }
+    grupos.push({ codigo, nombre: meta.nombre, creado: meta.creado, cantidadTemas: temas.length, participaciones, ultimaActividad });
+  }
+  return grupos;
+}
+
+async function loadTemas(){
+  const r = await storageGet('config:temas', true);
+  state.temas = r ? JSON.parse(r.value) : [];
+}
+async function saveTemas(){ await storageSet('config:temas', JSON.stringify(state.temas), true); }
+
+async function getTemasFrescos(){
+  const r = await storageGet('config:temas', true);
+  return r ? JSON.parse(r.value) : [];
+}
+async function upsertTema(tema){
+  const list = await getTemasFrescos();
+  const idx = list.findIndex(x => x.id === tema.id);
+  if(idx > -1) list[idx] = tema; else list.push(tema);
+  await storageSet('config:temas', JSON.stringify(list), true);
+  state.temas = list;
+}
+async function patchTema(id, patchFn){
+  const list = await getTemasFrescos();
+  const idx = list.findIndex(x => x.id === id);
+  if(idx > -1) patchFn(list[idx]);
+  await storageSet('config:temas', JSON.stringify(list), true);
+  state.temas = list;
+  return idx > -1 ? list[idx] : null;
+}
+async function removeTemaGlobal(id){
+  const list = await getTemasFrescos();
+  const filtered = list.filter(x => x.id !== id);
+  await storageSet('config:temas', JSON.stringify(filtered), true);
+  state.temas = filtered;
+}
+
+async function loadAjustes(){
+  const r = await storageGet('config:ajustes', true);
+  state.ajustes = r ? JSON.parse(r.value) : { permitirCrearTemas:false, requiereAprobacion:true };
+}
+async function saveAjustes(){ await storageSet('config:ajustes', JSON.stringify(state.ajustes), true); }
+
+function fechaCorta(ts){
+  if(!ts) return '';
+  const d = new Date(ts);
+  return d.toLocaleDateString('es-AR', { day:'2-digit', month:'2-digit', year:'numeric' })
+    + ' ' + d.toLocaleTimeString('es-AR', { hour:'2-digit', minute:'2-digit' });
+}
+
+function ordenarTemas(lista, modo){
+  const m = modo || 'actividad';
+  return lista.slice().sort((a,b) => {
+    if(!!a.fijado !== !!b.fijado) return a.fijado ? -1 : 1;
+    if(m === 'participantes') return (b._count||0) - (a._count||0);
+    if(m === 'creacion') return (b.creado||0) - (a.creado||0);
+    return ((b._ultimaActividad || b.creado || 0) - (a._ultimaActividad || a.creado || 0));
+  });
+}
+
+async function countParticipantes(temaId){
+  const keys = await storageList('conversacion:' + temaId + ':', true);
+  return keys.length;
+}
+
+async function cargarEncuestaEstado(){
+  if(state.temaActual && state.temaActual.encuesta){
+    state.encuestaResultados = await resultadosEncuesta(state.temaActual.id, state.temaActual.encuesta);
+    const votoR = await storageGet('voto:' + state.temaActual.id + ':' + state.participantId, true);
+    state.miVoto = votoR ? JSON.parse(votoR.value) : [];
+  } else {
+    state.encuestaResultados = null;
+    state.miVoto = [];
+  }
+}
+
+async function resultadosEncuesta(temaId, encuesta){
+  const keys = await storageList('voto:' + temaId + ':', true);
+  const counts = encuesta.opciones.map(() => 0);
+  let totalVotantes = 0;
+  for(const k of keys){
+    const r = await storageGet(k, true);
+    if(!r) continue;
+    try{
+      const sel = JSON.parse(r.value);
+      const arr = Array.isArray(sel) ? sel : [sel];
+      if(arr.length) totalVotantes++;
+      arr.forEach(i => { if(counts[i] !== undefined) counts[i]++; });
+    }catch(e){}
+  }
+  return { counts, totalVotantes };
+}
+
+async function cargarStatsTema(t){
+  const keys = await storageList('conversacion:' + t.id + ':', true);
+  t._count = keys.length;
+  t._ultimaActividad = t.ultimaActividad || 0;
+}
+
+function render(){
+  if(state.view === 'landing') return renderLanding();
+  if(state.view === 'crear-espacio') return renderCrearEspacio();
+  if(state.view === 'directorio-grupos') return renderDirectorioGrupos();
+  if(state.view === 'panorama-grupo-publico') return renderPanoramaGrupoPublico();
+  if(state.view === 'unirse-espacio') return renderUnirseEspacio();
+  if(state.view === 'espacio-creado') return renderEspacioCreado();
+  if(state.view === 'role') return renderRole();
+  if(state.view === 'p-acceso-pin') return renderAccesoPin();
+  if(state.view === 'p-nombre') return renderParticipantNombre();
+  if(state.view === 'p-topics') return renderParticipantTopics();
+  if(state.view === 'p-nuevo-tema') return renderParticipantNuevoTema();
+  if(state.view === 'p-registro') return renderParticipantRegistro();
+  if(state.view === 'p-start') return renderParticipantStart();
+  if(state.view === 'p-chat') return renderParticipantChat();
+  if(state.view === 'p-done') return renderParticipantDone();
+  if(state.view === 'mod-pin') return renderModPin();
+  if(state.view === 'mod-recuperar-pin') return renderModRecuperarPin();
+  if(state.view === 'moderator') return renderModerator();
+  if(state.view === 'mod-new-tema') return renderModNewTema();
+  if(state.view === 'mod-tema') return renderModTemaDetail();
+  if(state.view === 'acerca') return renderAcerca();
+  if(state.view === 'soporte-chat') return renderSoporteChat();
+  if(state.view === 'soporte-admin-pin') return renderSoporteAdminPin();
+  if(state.view === 'soporte-admin') return renderSoporteAdmin();
+}
+
+// Completar con los links reales cuando estén listos (Mercado Pago / PayPal.Me)
+const LINK_MERCADOPAGO = 'https://link.mercadopago.com.ar/joaquinlocati';
+const LINK_PAYPAL = 'https://paypal.me/joaquinlocati';
+
+const ACERCA_DE_RESUMEN = `Panorama IA es una herramienta de deliberación colectiva asistida por IA. Cualquier persona u organización puede crear su propio grupo ("Panorama"), con su propio link (un código único pegado al final), su propio PIN de moderador/a elegido por quien lo crea, y opcionalmente un PIN de acceso para participantes. Si el creador olvida su PIN, puede recuperarlo desde la misma cuenta de Claude con la que creó el grupo, sin necesidad de códigos extra.
+
+Dentro de un grupo, el moderador crea "temas" (preguntas o cuestiones a deliberar) con un título y una descripción que guía a la IA; puede fijarlos arriba de la lista, pausarlos, terminarlos, editarlos o eliminarlos, y también puede permitir que los participantes propongan temas ellos mismos, con o sin aprobación previa. La lista de temas se puede buscar por texto y ordenar por actividad reciente, fecha de creación o cantidad de participantes.
+
+Cada participante elige su nombre una sola vez por grupo (no se puede repetir con el de otra persona en el mismo grupo) y conversa en privado con una IA sobre cada tema, con sus propias palabras — la IA no opina ni influye, solo ayuda a pensar en voz alta y ordenar ideas. Esa IA puede buscar en la web si se lo piden, y también puede consultar las síntesis de los otros temas del mismo grupo si el participante pregunta si algo ya se habló en otro lado o pide un panorama general del grupo. Responde siempre en el idioma en que le escriban.
+
+Las conversaciones de un tema se cruzan para armar una "síntesis": resumen, consensos, matices/desacuerdos, propuestas (con nombre de quién las dijo, de forma transparente como en una asamblea presencial), y cuando corresponde, un plan de acción con pasos o un cuadro comparativo de posturas opuestas. Cualquier participante puede pedir "ver el panorama del grupo" en medio de su charla para conocer y profundizar sobre lo que dijeron los demás, incluso pidiendo traducciones. Cualquiera (participe o no) puede consultar esa síntesis desde el registro público del tema, sin ser moderador.
+
+Los temas pueden tener una encuesta opcional (una o varias opciones, no rígida: se puede cambiar el voto cuando quieras).
+
+Un grupo puede ser público (aparece en un directorio buscable en la pantalla principal, con buscador y orden, donde cualquiera puede ver un panorama de segundo nivel —una síntesis que cruza las síntesis de todos los temas del grupo— y sumarse) o privado (solo con el link, por defecto).
+
+Las síntesis, tanto de un tema como de un grupo entero, se pueden descargar en Word. Panorama IA es de código abierto (se puede descargar el código completo desde "Acerca de") y fue construido junto con Claude, de Anthropic. La idea de fondo es ampliar la participación democrática y la escucha colectiva, no reemplazarla, evitando el discurso de odio y la desinformación.
+
+Sobre la capacidad técnica: la app usa Claude Sonnet 4.6, que puede leer hasta 1.000.000 de tokens de contexto en una sola síntesis (aproximadamente 1.500 páginas de texto) — un grupo con 100 participantes escribiendo 2 páginas cada uno usa apenas un 10-14% de esa capacidad, así que la lectura no es un límite práctico. El margen de la respuesta (cuánto puede extenderse una síntesis) se ajusta automáticamente según la cantidad de texto a sintetizar, entre 1.000 y 4.000 tokens (de ~1 a ~4 páginas), para no acortar de más los temas grandes ni alargar de más los chicos. Si alguien pregunta cuánto tarda o cuántas personas soporta, respondé con esta información en términos simples, aclarando que el tiempo exacto de respuesta no está garantizado y depende de la carga del momento.`;
+
+function soporteSystemPrompt(){
+  return `Sos el asistente de soporte y sugerencias de Panorama IA. Tu tarea es responder dudas de cualquier persona sobre cómo funciona la herramienta, y también recibir sugerencias, críticas o comentarios generales con calidez, dejando que la persona se explaye sin necesidad de resolver nada vos mismo/a — un comentario o queja no necesita "solución" en el momento, alcanza con que quede registrado para quien administra la herramienta. Esta charla es anónima: no pidas ni uses ningún nombre. Respondé siempre en el idioma en que te escriban. Sé breve, cordial y directo, con intervenciones de 2 a 4 oraciones.
+
+Contexto sobre cómo funciona Panorama IA:
+${ACERCA_DE_RESUMEN}`;
+}
+
+async function sendToSoporte(userText){
+  state.busy = true; state.error = '';
+  if(!state.soporteMessages) state.soporteMessages = [];
+  if(userText) state.soporteMessages.push({ role:'user', content:userText });
+  render();
+  try{
+    if(!state.soporteId) state.soporteId = uid();
+    const reply = await callClaude(state.soporteMessages.length ? state.soporteMessages : [{role:'user', content:'Hola'}], soporteSystemPrompt());
+    state.soporteMessages.push({ role:'assistant', content: reply });
+    await rawStorageSet('soporte:conversacion:' + state.soporteId, JSON.stringify({ messages: state.soporteMessages, ts: Date.now() }), true);
+  }catch(e){
+    state.error = 'No se pudo conectar con la IA. (' + e.message + ')';
+  }
+  state.busy = false;
+  render();
+}
+
+function renderSoporteChat(){
+  const log = (state.soporteMessages||[]).map(m => `<div class="msg ${m.role==='user'?'user':'ai'}">${esc(m.content)}</div>`).join('');
+  app.innerHTML = `
+    <a class="back" id="back">← volver</a>
+    <p class="eyebrow" style="margin-top:18px;">Consultas y sugerencias</p>
+    <h1 style="font-size:26px;">Hablá con Panorama IA</h1>
+    <p class="sub">Preguntá lo que quieras sobre cómo funciona la herramienta, o dejá una sugerencia, crítica o comentario. Es anónimo, no hace falta que digas quién sos.</p>
+    <div class="card">
+      <div class="chat-log" id="log">
+        ${log}
+        ${state.busy ? '<div class="msg ai typing">escribiendo…</div>' : ''}
+      </div>
+      <div class="chat-input-row">
+        <textarea id="msg-input" placeholder="Escribí tu consulta o sugerencia…" ${state.busy?'disabled':''}></textarea>
+        <button class="btn btn-primary" id="send-btn" ${state.busy?'disabled':''}>Enviar</button>
+      </div>
+      <div class="err">${esc(state.error)}</div>
+    </div>
+    <div class="mod-access">
+      <a class="back" id="go-soporte-admin">¿Sos el administrador/a de Panorama IA?</a>
+    </div>
+  `;
+  const logEl = document.getElementById('log');
+  logEl.scrollTop = logEl.scrollHeight;
+  document.getElementById('back').onclick = () => { state.view = 'landing'; render(); };
+  const input = document.getElementById('msg-input');
+  const send = async () => {
+    const text = input.value.trim();
+    if(!text || state.busy) return;
+    input.value = '';
+    await sendToSoporte(text);
+  };
+  document.getElementById('send-btn').onclick = send;
+  input.addEventListener('keydown', (e) => { if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); }});
+  document.getElementById('go-soporte-admin').onclick = () => { state.view = 'soporte-admin-pin'; render(); };
+}
+
+async function renderSoporteAdminPin(){
+  const existente = await rawStorageGet('soporte:admin-pin-hash', true);
+  const yaExiste = !!existente;
+  app.innerHTML = `
+    <a class="back" id="back">← volver</a>
+    <p class="eyebrow" style="margin-top:18px;">Panel de administración</p>
+    <h1 style="font-size:26px;">${yaExiste ? 'PIN de administrador/a' : 'Configurá tu PIN de administrador/a'}</h1>
+    ${!yaExiste ? '<p class="sub">Todavía nadie configuró un PIN para este panel. Como estás entrando primero, definilo ahora — es el único que va a funcionar de acá en más, guardalo bien.</p>' : ''}
+    <div class="card">
+      <div class="field">
+        <label for="sa-pin">PIN</label>
+        <input type="text" id="sa-pin" placeholder="••••" maxlength="12" />
+      </div>
+      <button class="btn btn-primary" id="sa-entrar">${yaExiste ? 'Entrar' : 'Configurar y entrar'}</button>
+      <div class="err" id="sa-err"></div>
+    </div>
+  `;
+  document.getElementById('back').onclick = () => { state.view='soporte-chat'; render(); };
+  const submit = async () => {
+    const v = document.getElementById('sa-pin').value.trim();
+    if(!v){ document.getElementById('sa-err').textContent = 'Ingresá un PIN.'; return; }
+    if(!yaExiste){
+      await rawStorageSet('soporte:admin-pin-hash', await hashPin(v), true);
+      state.view = 'soporte-admin'; render();
+      return;
+    }
+    if((await hashPin(v)) !== existente.value){ document.getElementById('sa-err').textContent = 'PIN incorrecto.'; return; }
+    state.view = 'soporte-admin'; render();
+  };
+  document.getElementById('sa-entrar').onclick = submit;
+  document.getElementById('sa-pin').addEventListener('keydown', (e) => { if(e.key==='Enter') submit(); });
+}
+
+function soporteSintesisSystemPrompt(){
+  return `Sos un asistente que resume conversaciones anónimas de soporte y sugerencias recibidas por Panorama IA. Identificá, mirando el conjunto de conversaciones: un resumen general, las preguntas o dudas más frecuentes, las sugerencias destacadas, y los problemas o quejas reportados. Sé fiel a lo que efectivamente se dijo, sin inventar nada. Respondé ÚNICAMENTE con un objeto JSON válido, sin texto adicional, sin markdown, con esta forma exacta:
+{"resumen":"...", "preguntas_frecuentes":["..."], "sugerencias":["..."], "problemas_reportados":["..."]}`;
+}
+
+async function generarSintesisSoporte(){
+  const keys = await rawStorageList('soporte:conversacion:', true);
+  let transcript = '';
+  for(const k of keys){
+    const r = await rawStorageGet(k, true);
+    if(!r) continue;
+    try{
+      const c = JSON.parse(r.value);
+      transcript += '\n\n--- Conversación ---\n' + c.messages.map(m => (m.role==='user'?'Visitante':'IA') + ': ' + m.content).join('\n');
+    }catch(e){}
+  }
+  if(!transcript) return null;
+  try{
+    const raw = await callClaude([{ role:'user', content: 'Conversaciones de soporte a analizar:' + transcript }], soporteSintesisSystemPrompt(), null, calcularMaxTokensSintesis(transcript.length));
+    const cleaned = raw.replace(/```json|```/g, '').trim();
+    const parsed = JSON.parse(cleaned);
+    await rawStorageSet('soporte:sintesis', JSON.stringify(parsed), true);
+    return parsed;
+  }catch(e){ return null; }
+}
+
+function renderSintesisSoporteContenido(s){
+  if(!s) return `<p class="empty">Todavía no se generó una síntesis.</p>`;
+  const preguntas = (s.preguntas_frecuentes||[]).map(p=>`<li>${esc(p)}</li>`).join('');
+  const sugerencias = (s.sugerencias||[]).map(p=>`<li>${esc(p)}</li>`).join('');
+  const problemas = (s.problemas_reportados||[]).map(p=>`<li>${esc(p)}</li>`).join('');
+  return `
+    <div class="synth-block"><h3>Resumen</h3><p>${esc(s.resumen||'')}</p></div>
+    <div class="synth-block"><h3>Preguntas frecuentes</h3><ul>${preguntas || '<li class="empty">Sin datos suficientes.</li>'}</ul></div>
+    <div class="synth-block"><h3>Sugerencias</h3><ul>${sugerencias || '<li class="empty">Sin datos suficientes.</li>'}</ul></div>
+    <div class="synth-block"><h3>Problemas reportados</h3><ul>${problemas || '<li class="empty">Sin datos suficientes.</li>'}</ul></div>
+  `;
+}
+
+function formatSoporteWordHtml(s){
+  const preguntas = (s.preguntas_frecuentes||[]).map(p=>`<li>${p}</li>`).join('');
+  const sugerencias = (s.sugerencias||[]).map(p=>`<li>${p}</li>`).join('');
+  const problemas = (s.problemas_reportados||[]).map(p=>`<li>${p}</li>`).join('');
+  return `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+<head><meta charset="utf-8"><title>Consultas y sugerencias — Panorama IA</title></head>
+<body style="font-family:Calibri,Arial,sans-serif;">
+<h1 style="color:#1F3B57;">Consultas y sugerencias — Panorama IA</h1>
+<h2 style="color:#9C7A3C;">Resumen</h2><p>${s.resumen || ''}</p>
+<h2 style="color:#9C7A3C;">Preguntas frecuentes</h2><ul>${preguntas || '<li>Sin datos suficientes.</li>'}</ul>
+<h2 style="color:#9C7A3C;">Sugerencias</h2><ul>${sugerencias || '<li>Sin datos suficientes.</li>'}</ul>
+<h2 style="color:#9C7A3C;">Problemas reportados</h2><ul>${problemas || '<li>Sin datos suficientes.</li>'}</ul>
+</body></html>`;
+}
+
+function renderSoporteAdmin(){
+  app.innerHTML = `
+    <a class="back" id="back">← volver</a>
+    <p class="eyebrow" style="margin-top:18px;">Panel de administración</p>
+    <h1>Consultas y sugerencias recibidas</h1>
+    <button class="btn btn-primary" id="gen-soporte" ${state.busy?'disabled':''}>${state.busy ? 'Generando…' : 'Generar / actualizar síntesis'}</button>
+    <button class="btn btn-ghost" id="download-soporte" style="margin-left:8px;" ${state.sintesisSoporte ? '' : 'disabled'}>Descargar (Word)</button>
+    <div class="err" id="soporte-err"></div>
+    <hr class="divider" />
+    <div id="soporte-area">${renderSintesisSoporteContenido(state.sintesisSoporte)}</div>
+  `;
+  document.getElementById('back').onclick = () => { state.view='soporte-chat'; render(); };
+  document.getElementById('gen-soporte').onclick = async () => {
+    state.busy = true; state.error=''; render();
+    const s = await generarSintesisSoporte();
+    if(!s) document.getElementById('soporte-err').textContent = 'Todavía no hay consultas suficientes para armar una síntesis.';
+    state.sintesisSoporte = s;
+    state.busy = false; render();
+  };
+  const dl = document.getElementById('download-soporte');
+  if(dl) dl.onclick = () => {
+    try{
+      const html = formatSoporteWordHtml(state.sintesisSoporte);
+      const blob = new Blob(['\ufeff', html], { type: 'application/msword' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'consultas_y_sugerencias_panorama_ia.doc';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }catch(e){ document.getElementById('soporte-err').textContent = 'No se pudo descargar el archivo.'; }
+  };
+  (async () => {
+    const r = await rawStorageGet('soporte:sintesis', true);
+    state.sintesisSoporte = r ? JSON.parse(r.value) : null;
+    const area = document.getElementById('soporte-area');
+    if(area) area.innerHTML = renderSintesisSoporteContenido(state.sintesisSoporte);
+    const dlBtn = document.getElementById('download-soporte');
+    if(dlBtn && state.sintesisSoporte) dlBtn.disabled = false;
+  })();
+}
+
+function renderAcerca(){
+  app.innerHTML = `
+    <a class="back" id="back">← volver</a>
+    <p class="eyebrow" style="margin-top:18px;">Acerca de</p>
+    <h1>Panorama IA</h1>
+    <p class="sub">Una herramienta de deliberación colectiva asistida por inteligencia artificial, pensada para cualquier grupo humano que necesite pensar y decidir en conjunto.</p>
+
+    <div class="card">
+      <h3 style="font-family:'Fraunces',serif; color:var(--gold); margin-top:0;">¿Qué problema resuelve?</h3>
+      <p style="font-size:14.5px; line-height:1.6; color:var(--ink);">En grupos numerosos, la mayor barrera para deliberar no es la falta de ganas de participar, sino la dificultad concreta de expresarse frente a muchos y de escuchar realmente a todos los demás. Panorama IA usa una IA para conversar en privado con cada persona, y después cruza todas esas conversaciones para devolver un panorama común: qué se repite, dónde hay consenso, dónde hay matices, y qué propuestas surgieron.</p>
+    </div>
+
+    <div class="card">
+      <h3 style="font-family:'Fraunces',serif; color:var(--gold); margin-top:0;">La idea de fondo</h3>
+      <p style="font-size:14.5px; line-height:1.6; color:var(--ink);">Este enfoque se conoce en el campo de la democracia digital como <b>"deliberación masiva en línea"</b> (Mass Online Deliberation, o MOD), y ya se usa en el mundo con herramientas como Pol.is (usada en el proceso vTaiwan), la Habermas Machine de Google DeepMind, o Talk to the City del AI Objectives Institute. Panorama IA toma esa misma idea y la lleva a un formato conversacional fluido, tipo charla y no formulario, con un panorama que se puede consultar en vivo por cualquiera. Es una pieza más dentro de lo que se conoce como <b>democracia digital o democracia participativa asistida por tecnología</b>: usar herramientas nuevas para ampliar quién puede ser escuchado, no para reemplazar la decisión humana.</p>
+    </div>
+
+    <div class="card">
+      <h3 style="font-family:'Fraunces',serif; color:var(--gold); margin-top:0;">Cómo está hecho</h3>
+      <p style="font-size:14.5px; line-height:1.6; color:var(--ink);">Panorama IA fue construido junto con Claude (de Anthropic), que además es el modelo de IA que conversa con cada participante y arma las síntesis. Es una sola página web autocontenida — sin servidores propios ni bases de datos externas — que guarda todo en el almacenamiento del propio espacio donde corre.</p>
+    </div>
+
+    <div class="card">
+      <h3 style="font-family:'Fraunces',serif; color:var(--gold); margin-top:0;">Qué pretende ser</h3>
+      <p style="font-size:14.5px; line-height:1.6; color:var(--ink);">Panorama IA no busca reemplazar la deliberación humana ni la toma de decisiones de ningún grupo — busca ampliarla. La apuesta de fondo es que la barrera para participar en la vida colectiva no suele ser la falta de interés, sino la falta de tiempo, de comodidad para hablar en público, o de una instancia real donde la propia voz llegue a formar parte de algo más grande. La idea es que cualquier organización —chica o grande, con o sin recursos técnicos— pueda tener acceso a esa misma capacidad de escuchar a todos sus integrantes, sin depender de encuestas rígidas ni de reuniones interminables.</p>
+      <p style="font-size:14.5px; line-height:1.6; color:var(--ink);">Es un proyecto en construcción activa, pensado como un piloto abierto: se ajusta y mejora a partir de lo que cada grupo que lo prueba encuentra útil, confuso, o le falta. No pretende tener todas las respuestas de entrada, sino ser una base honesta desde donde seguir mejorando junto con quienes lo usan.</p>
+    </div>
+
+    <div class="card">
+      <h3 style="font-family:'Fraunces',serif; color:var(--gold); margin-top:0;">Cada grupo, un espacio propio</h3>
+      <p style="font-size:14.5px; line-height:1.6; color:var(--ink);">Cualquier persona puede crear su propio Panorama para su asamblea, cooperativa, consorcio, sindicato, fundación, equipo de trabajo o cualquier otro tipo de organización — con su propio link, su propio moderador y sus propios temas, completamente independiente de cualquier otro grupo que use la misma herramienta.</p>
+    </div>
+
+    <div class="card">
+      <h3 style="font-family:'Fraunces',serif; color:var(--gold); margin-top:0;">Colaborá con el proyecto</h3>
+      <p style="font-size:14.5px; line-height:1.6; color:var(--ink);">Panorama IA es gratis y de código abierto para cualquier persona u organización, y va a seguir siendo así siempre — no hace falta pagar nada para crear tu grupo ni para usarlo. Si te resultó útil y querés colaborar para que el proyecto siga creciendo, podés hacer un aporte voluntario, del monto que quieras.</p>
+      <div class="tema-actions">
+        <a class="btn btn-teal btn-sm" href="#" id="link-mercadopago" target="_blank" rel="noopener">Colaborar con Mercado Pago</a>
+        <a class="btn btn-clay btn-sm" href="#" id="link-paypal" target="_blank" rel="noopener">Colaborar con PayPal</a>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3 style="font-family:'Fraunces',serif; color:var(--gold); margin-top:0;">Código abierto</h3>
+      <p style="font-size:14.5px; line-height:1.6; color:var(--ink);">Todo el código de Panorama IA es libre de descargar, modificar y reutilizar. Cualquier persona u organización lo puede tomar como base para levantar su propia versión — una cooperativa, un municipio, un sindicato, un consorcio, lo que sea.</p>
+      <button class="btn btn-primary btn-sm" id="descargar-codigo" style="margin-top:8px;">Descargar código fuente (.html)</button>
+    </div>
+
+    <div class="card">
+      <h3 style="font-family:'Fraunces',serif; color:var(--gold); margin-top:0;">Responsabilidad de uso</h3>
+      <p style="font-size:14.5px; line-height:1.6; color:var(--ink);">Panorama IA se ofrece como código abierto, "tal cual", sin garantías de ningún tipo. Quien crea un grupo es responsable de su propio espacio: de los temas que abre, de cómo modera, y del uso que su comunidad le da. Cada grupo es completamente independiente — no existe una administración central de la herramienta con acceso o control sobre grupos ajenos.</p>
+      <p style="font-size:14.5px; line-height:1.6; color:var(--ink);">Mientras la app funcione conectada a la IA de Anthropic (como ocurre en esta versión), ese uso queda sujeto a las políticas de uso de Anthropic, sin importar la interfaz particular que lo presente. Quien descargue este código y lo conecte a otro proveedor de IA, o lo aloje por su cuenta, asume la responsabilidad legal y ética de ese uso bajo su propia jurisdicción — el autor original de este código no se hace responsable por usos indebidos de versiones modificadas o alojadas por terceros.</p>
+    </div>
+  `;
+  document.getElementById('back').onclick = () => { state.view = state.workspaceId ? 'role' : 'landing'; render(); };
+  const mpLink = document.getElementById('link-mercadopago');
+  const ppLink = document.getElementById('link-paypal');
+  if(LINK_MERCADOPAGO){ mpLink.href = LINK_MERCADOPAGO; } else { mpLink.removeAttribute('href'); mpLink.textContent = 'Mercado Pago (próximamente)'; mpLink.style.opacity = '.5'; mpLink.style.cursor = 'default'; mpLink.onclick = (e) => e.preventDefault(); }
+  if(LINK_PAYPAL){ ppLink.href = LINK_PAYPAL; } else { ppLink.removeAttribute('href'); ppLink.textContent = 'PayPal (próximamente)'; ppLink.style.opacity = '.5'; ppLink.style.cursor = 'default'; ppLink.onclick = (e) => e.preventDefault(); }
+  document.getElementById('descargar-codigo').onclick = () => {
+    try{
+      const html = '<!doctype html>\n' + document.documentElement.outerHTML;
+      const blob = new Blob([html], { type: 'text/html' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = 'panorama-ia-codigo-fuente.html';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }catch(e){ alert('No se pudo descargar el archivo desde acá. Podés guardar esta página directamente desde el navegador (Ctrl+S / Cmd+S).'); }
+  };
+}
+
+async function hashPin(pin){
+  const enc = new TextEncoder().encode(pin);
+  const buf = await crypto.subtle.digest('SHA-256', enc);
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
+}
+
+async function agregarGrupoReciente(codigo, nombre){
+  let lista = [];
+  try{
+    const r = await rawStorageGet('mis-grupos-recientes', false);
+    if(r) lista = JSON.parse(r.value);
+  }catch(e){}
+  lista = lista.filter(g => g.codigo !== codigo);
+  lista.unshift({ codigo, nombre });
+  lista = lista.slice(0, 6);
+  await rawStorageSet('mis-grupos-recientes', JSON.stringify(lista), false);
+}
+
+async function obtenerGruposRecientes(){
+  try{
+    const r = await rawStorageGet('mis-grupos-recientes', false);
+    return r ? JSON.parse(r.value) : [];
+  }catch(e){ return []; }
+}
+
+function slugify(s){
+  return (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,30) || 'panorama';
+}
+
+async function renderLanding(){
+  const recientes = await obtenerGruposRecientes();
+  const recientesHtml = recientes.length ? `
+    <div class="field">
+      <label>Tus grupos recientes</label>
+      <div class="tema-actions" style="flex-wrap:wrap;">
+        ${recientes.map(g => `<button class="btn btn-ghost btn-sm reciente-btn" data-codigo="${esc(g.codigo)}">${esc(g.nombre)}</button>`).join('')}
+      </div>
+    </div>` : '';
+  app.innerHTML = `
+    <p class="brand-title">Panorama <span class="accent">IA</span></p>
+    <h1 style="font-size:24px; margin-bottom:14px;">Bienvenido/a</h1>
+    <p class="sub" style="max-width:100%; text-align:justify;">Panorama IA es un espacio de deliberación colectiva: cada persona conversa en privado con una IA sobre los temas que le importan a su grupo, y esas conversaciones se cruzan para armar un panorama común de lo que se piensa. Cada grupo tiene su propio Panorama, independiente del resto, con su propio código y sus propios moderadores.</p>
+    ${state.errorLanding ? `<p class="err">${esc(state.errorLanding)}</p>` : ''}
+    ${recientesHtml}
+
+    <div class="field">
+      <label for="ln-codigo">Código de tu grupo</label>
+      <input type="text" id="ln-codigo" placeholder="Ej: cooperativa-el-sauce" />
+    </div>
+    <button class="btn btn-primary btn-cta" id="ir-unirse">Ingresar →</button>
+    <p class="footer-note">Si alguien te compartió un código de grupo, escribilo acá arriba para entrar directo.</p>
+
+    <div class="card" style="margin-top:32px; text-align:center;">
+      <p class="sub" style="margin:0 auto 16px; max-width:100%;">¿Querés crear tu propio grupo de Panorama?</p>
+      <button class="btn btn-teal btn-sm" id="ir-crear">Crear mi Panorama</button>
+    </div>
+
+    <div class="card" style="margin-top:16px; text-align:center;">
+      <p class="sub" style="margin:0 auto 16px; max-width:100%;">¿Buscás grupos de Panorama que ya existen?</p>
+      <button class="btn btn-clay btn-sm" id="ir-directorio">Ver grupos públicos</button>
+    </div>
+
+    <div class="mod-access">
+      <a class="back" id="go-acerca">Sobre Panorama IA · código abierto</a>
+      <br/><a class="back" id="go-soporte" style="margin-top:10px; display:inline-block;">Consultas y sugerencias</a>
+    </div>
+  `;
+  document.getElementById('ir-crear').onclick = () => { state.errorLanding=''; state.view = 'crear-espacio'; render(); };
+  document.getElementById('ir-directorio').onclick = () => { state.view = 'directorio-grupos'; render(); };
+  document.getElementById('go-soporte').onclick = async () => {
+    state.soporteMessages = [];
+    state.soporteId = null;
+    state.view = 'soporte-chat';
+    render();
+    await sendToSoporte(null);
+  };
+  document.getElementById('go-acerca').onclick = () => { state.view = 'acerca'; render(); };
+  document.querySelectorAll('.reciente-btn').forEach(b => b.onclick = async () => {
+    const codigo = b.dataset.codigo;
+    const meta = await rawStorageGet('wsmeta:' + codigo, true);
+    if(!meta){ state.errorLanding = 'Ese grupo ya no está disponible.'; render(); return; }
+    state.workspaceId = codigo;
+    state.workspaceMeta = JSON.parse(meta.value);
+    await agregarGrupoReciente(codigo, state.workspaceMeta.nombre);
+    state.errorLanding = '';
+    state.view = 'role'; render();
+  });
+  const codigoInput = document.getElementById('ln-codigo');
+  const irUnirse = async () => {
+    const codigo = codigoInput.value.trim();
+    if(!codigo){ state.errorLanding = 'Ingresá un código para entrar.'; render(); return; }
+    const meta = await rawStorageGet('wsmeta:' + codigo, true);
+    if(!meta){ state.errorLanding = 'No encontramos un Panorama con ese código.'; render(); return; }
+    state.workspaceId = codigo;
+    state.workspaceMeta = JSON.parse(meta.value);
+    await agregarGrupoReciente(codigo, state.workspaceMeta.nombre);
+    state.errorLanding = '';
+    state.view = 'role'; render();
+  };
+  document.getElementById('ir-unirse').onclick = irUnirse;
+  codigoInput.addEventListener('keydown', (e) => { if(e.key==='Enter') irUnirse(); });
+}
+
+function renderDirectorioGrupos(){
+  app.innerHTML = `
+    <a class="back" id="back">← volver</a>
+    <p class="eyebrow" style="margin-top:18px;">Grupos públicos</p>
+    <h1>Explorá otros Panoramas</h1>
+    <p class="sub">Grupos que decidieron abrirse: cualquiera puede ver de qué hablan y sumarse.</p>
+    <div id="lista-directorio"><p class="empty">Cargando…</p></div>
+  `;
+  document.getElementById('back').onclick = () => { state.view='landing'; render(); };
+  cargarDirectorio();
+}
+
+async function cargarDirectorio(){
+  const grupos = await listarGruposPublicos();
+  state.directorioGrupos = grupos;
+  pintarDirectorio();
+}
+
+function pintarDirectorio(){
+  const cont = document.getElementById('lista-directorio');
+  if(!cont) return;
+  const filtro = (state.filtroDirectorio || '').toLowerCase();
+  let lista = (state.directorioGrupos || []).filter(g => !filtro || g.nombre.toLowerCase().includes(filtro));
+  const orden = state.ordenDirectorio || 'actividad';
+  lista = lista.slice().sort((a,b) => {
+    if(orden === 'participantes') return b.participaciones - a.participaciones;
+    if(orden === 'creacion') return (b.creado||0) - (a.creado||0);
+    return (b.ultimaActividad||b.creado||0) - (a.ultimaActividad||a.creado||0);
+  });
+  const items = lista.length ? lista.map(g => `
+    <div class="tema-item" data-codigo="${esc(g.codigo)}">
+      <div class="row1"><h4>${esc(g.nombre)}</h4></div>
+      <div class="meta">
+        <span>${g.cantidadTemas} tema${g.cantidadTemas===1?'':'s'}</span>
+        <span>${g.participaciones} participaciones</span>
+        ${g.ultimaActividad ? `<span>Última actividad: ${fechaCorta(g.ultimaActividad)}</span>` : ''}
+        <span>Creado: ${fechaCorta(g.creado)}</span>
+      </div>
+      <div class="tema-actions" style="margin-top:12px;">
+        <button class="btn btn-primary btn-sm dir-unirse" data-codigo="${esc(g.codigo)}">Unirme</button>
+        <button class="btn btn-ghost btn-sm dir-panorama" data-codigo="${esc(g.codigo)}">Ver panorama del grupo</button>
+      </div>
+    </div>`).join('') : `<p class="empty">${(state.directorioGrupos||[]).length ? 'Ningún grupo coincide con la búsqueda.' : 'Todavía no hay grupos públicos.'}</p>`;
+  cont.innerHTML = `
+    <div class="field">
+      <input type="text" id="buscar-directorio" placeholder="Buscar por nombre de grupo…" value="${esc(state.filtroDirectorio||'')}" />
+    </div>
+    <div class="field">
+      <label for="orden-directorio">Ordenar por</label>
+      <select id="orden-directorio" class="select-orden">
+        <option value="actividad" ${orden==='actividad'?'selected':''}>Actividad reciente</option>
+        <option value="creacion" ${orden==='creacion'?'selected':''}>Fecha de creación</option>
+        <option value="participantes" ${orden==='participantes'?'selected':''}>Más participaciones</option>
+      </select>
+    </div>
+    <div>${items}</div>
+  `;
+  const buscar = document.getElementById('buscar-directorio');
+  buscar.addEventListener('input', () => { state.filtroDirectorio = buscar.value; pintarDirectorio(); setTimeout(()=>{ const el=document.getElementById('buscar-directorio'); if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length);} },0); });
+  document.getElementById('orden-directorio').addEventListener('change', (e) => { state.ordenDirectorio = e.target.value; pintarDirectorio(); });
+  document.querySelectorAll('.dir-unirse').forEach(b => b.onclick = async () => {
+    const codigo = b.dataset.codigo;
+    const meta = await rawStorageGet('wsmeta:' + codigo, true);
+    if(!meta) return;
+    state.workspaceId = codigo;
+    state.workspaceMeta = JSON.parse(meta.value);
+    await agregarGrupoReciente(codigo, state.workspaceMeta.nombre);
+    state.view = 'role'; render();
+  });
+  document.querySelectorAll('.dir-panorama').forEach(b => b.onclick = () => {
+    state.grupoPublicoActual = state.directorioGrupos.find(g => g.codigo === b.dataset.codigo);
+    state.view = 'panorama-grupo-publico'; render();
+  });
+}
+
+function synthGrupoSystemPrompt(nombreGrupo){
+  return `Sos un asistente que arma un panorama general de un grupo llamado "${nombreGrupo}" dentro de una herramienta de deliberación colectiva. Vas a recibir las síntesis ya generadas de los distintos temas que se hablaron en este grupo. Tu tarea es identificar, mirando el conjunto: de qué se trata este grupo en general, qué ejes temáticos predominan, y qué consensos o tensiones se repiten entre varios temas (no dentro de uno solo). Mantené un tono respetuoso y riguroso, fiel a lo que cada tema realmente reflejó, sin inventar nada que no esté en las síntesis recibidas. Respondé ÚNICAMENTE con un objeto JSON válido, sin texto adicional, sin markdown, con esta forma exacta:
+{"resumen":"...", "ejes_tematicos":["..."], "consensos_transversales":["..."], "temas_destacados":[{"titulo":"...","porque":"..."}]}`;
+}
+
+async function generarPanoramaGrupo(codigo, nombreGrupo){
+  const temasR = await otroGrupoGet(codigo, 'config:temas', true);
+  const temas = temasR ? JSON.parse(temasR.value) : [];
+  let transcript = '';
+  for(const t of temas){
+    const s = await otroGrupoGet(codigo, 'sintesis:' + t.id, true);
+    if(s){
+      let parsed; try{ parsed = JSON.parse(s.value); }catch(e){ parsed = null; }
+      if(parsed) transcript += `\n\n--- Tema: ${t.titulo} ---\nResumen: ${parsed.resumen||''}\nConsensos: ${(parsed.consensos||[]).map(itemTexto).join(' / ')}`;
+    }
+  }
+  if(!transcript) return null;
+  try{
+    const raw = await callClaude([{ role:'user', content: 'Síntesis de los temas del grupo:' + transcript }], synthGrupoSystemPrompt(nombreGrupo), null, calcularMaxTokensSintesis(transcript.length));
+    const cleaned = raw.replace(/```json|```/g, '').trim();
+    const parsed = JSON.parse(cleaned);
+    await otroGrupoSet(codigo, 'panorama-grupo', JSON.stringify(parsed), true);
+    return parsed;
+  }catch(e){ return null; }
+}
+
+function formatPanoramaGrupoWordHtml(nombreGrupo, p){
+  const ejesHtml = (p.ejes_tematicos||[]).map(e=>`<li>${e}</li>`).join('');
+  const consensosHtml = (p.consensos_transversales||[]).map(e=>`<li>${e}</li>`).join('');
+  const destacadosHtml = (p.temas_destacados||[]).map(t=>`<li><b>${t.titulo||''}:</b> ${t.porque||''}</li>`).join('');
+  return `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+<head><meta charset="utf-8"><title>${nombreGrupo}</title></head>
+<body style="font-family:Calibri,Arial,sans-serif;">
+<h1 style="color:#1F3B57;">Panorama del grupo: ${nombreGrupo}</h1>
+<h2 style="color:#9C7A3C;">Resumen</h2><p>${p.resumen || ''}</p>
+<h2 style="color:#9C7A3C;">Ejes temáticos</h2><ul>${ejesHtml || '<li>Sin datos suficientes.</li>'}</ul>
+<h2 style="color:#9C7A3C;">Consensos transversales</h2><ul>${consensosHtml || '<li>Sin datos suficientes.</li>'}</ul>
+<h2 style="color:#9C7A3C;">Temas destacados</h2><ul>${destacadosHtml || '<li>Sin datos suficientes.</li>'}</ul>
+</body></html>`;
+}
+
+function renderPanoramaGrupoPublico(){
+  const g = state.grupoPublicoActual;
+  app.innerHTML = `
+    <a class="back" id="back">← grupos públicos</a>
+    <p class="eyebrow" style="margin-top:18px;">Panorama del grupo</p>
+    <h1 style="font-size:26px;">${esc(g.nombre)}</h1>
+    <div class="stat-row">
+      <div class="stat"><span class="n">${g.cantidadTemas}</span><span class="l">temas</span></div>
+      <div class="stat"><span class="n">${g.participaciones}</span><span class="l">participaciones</span></div>
+    </div>
+    <button class="btn btn-primary" id="gen-pg" ${state.busy?'disabled':''}>${state.busy ? 'Generando…' : 'Generar / actualizar panorama del grupo'}</button>
+    <button class="btn btn-ghost" id="download-pg" style="margin-left:8px;" ${state.panoramaGrupoActual ? '' : 'disabled'}>Descargar resumen (Word)</button>
+    <button class="btn btn-primary btn-cta" id="unirme-pg" style="margin-top:16px;">Unirme a este grupo →</button>
+    <div class="err" id="pg-err"></div>
+    <hr class="divider" />
+    <div id="pg-area">${renderPanoramaGrupoContenido(state.panoramaGrupoActual)}</div>
+  `;
+  document.getElementById('back').onclick = () => { state.view='directorio-grupos'; render(); };
+  document.getElementById('unirme-pg').onclick = async () => {
+    const meta = await rawStorageGet('wsmeta:' + g.codigo, true);
+    if(!meta) return;
+    state.workspaceId = g.codigo;
+    state.workspaceMeta = JSON.parse(meta.value);
+    await agregarGrupoReciente(g.codigo, state.workspaceMeta.nombre);
+    state.view = 'role'; render();
+  };
+  document.getElementById('gen-pg').onclick = async () => {
+    state.busy = true; state.error=''; render();
+    const p = await generarPanoramaGrupo(g.codigo, g.nombre);
+    if(!p) document.getElementById('pg-err').textContent = 'Todavía no hay síntesis de temas suficientes para armar el panorama del grupo.';
+    state.panoramaGrupoActual = p;
+    state.busy = false; render();
+  };
+  const downloadPgBtn = document.getElementById('download-pg');
+  if(downloadPgBtn) downloadPgBtn.onclick = () => {
+    try{
+      const html = formatPanoramaGrupoWordHtml(g.nombre, state.panoramaGrupoActual);
+      const blob = new Blob(['\ufeff', html], { type: 'application/msword' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'panorama_' + g.nombre.toLowerCase().replace(/[^a-z0-9]+/g,'_').slice(0,40) + '.doc';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }catch(e){ document.getElementById('pg-err').textContent = 'No se pudo descargar el archivo.'; }
+  };
+  (async () => {
+    const r = await otroGrupoGet(g.codigo, 'panorama-grupo', true);
+    state.panoramaGrupoActual = r ? JSON.parse(r.value) : null;
+    document.getElementById('pg-area').innerHTML = renderPanoramaGrupoContenido(state.panoramaGrupoActual);
+  })();
+}
+
+function renderPanoramaGrupoContenido(p){
+  if(!p) return `<p class="empty">Todavía no se generó un panorama de este grupo.</p>`;
+  const ejes = (p.ejes_tematicos||[]).map(e=>`<li>${esc(e)}</li>`).join('');
+  const consensos = (p.consensos_transversales||[]).map(e=>`<li>${esc(e)}</li>`).join('');
+  const destacados = (p.temas_destacados||[]).map(t=>`<div class="proposal"><div class="t">${esc(t.titulo||'')}</div><div>${esc(t.porque||'')}</div></div>`).join('');
+  return `
+    <div class="synth-block"><h3>Resumen</h3><p>${esc(p.resumen||'')}</p></div>
+    <div class="synth-block"><h3>Ejes temáticos</h3><ul>${ejes || '<li class="empty">Sin datos suficientes.</li>'}</ul></div>
+    <div class="synth-block"><h3>Consensos transversales</h3><ul>${consensos || '<li class="empty">Sin datos suficientes.</li>'}</ul></div>
+    <div class="synth-block"><h3>Temas destacados</h3>${destacados || '<p class="empty">Sin datos suficientes.</p>'}</div>
+  `;
+}
+
+function renderCrearEspacio(){
+  app.innerHTML = `
+    <a class="back" id="back">← volver</a>
+    <p class="eyebrow" style="margin-top:18px;">Nuevo grupo</p>
+    <h1>Creá tu Panorama</h1>
+    <div class="card">
+      <div class="field">
+        <label for="ce-nombre">Nombre de tu grupo u organización</label>
+        <input type="text" id="ce-nombre" placeholder="Ej: Cooperativa El Sauce" />
+      </div>
+      <div class="field">
+        <label for="ce-pin">Elegí un PIN de moderador/a</label>
+        <input type="text" id="ce-pin" placeholder="Ej: 4 a 8 caracteres" maxlength="12" />
+      </div>
+      <div class="field">
+        <label for="ce-pin-acceso">PIN de acceso para participantes (opcional)</label>
+        <input type="text" id="ce-pin-acceso" placeholder="Dejalo vacío si no querés restringir el ingreso" maxlength="12" />
+      </div>
+      <label class="toggle-row"><input type="checkbox" id="ce-publico" /> Hacer público este grupo (aparece en el directorio, cualquiera puede verlo y sumarse)</label>
+      <p class="footer-note" style="margin-top:-6px;">Por defecto queda privado: solo puede entrar quien tenga el link. Podés cambiarlo cuando quieras desde el panel de moderación.</p>
+      <button class="btn btn-primary" id="ce-crear" style="margin-top:8px;">Crear mi Panorama</button>
+      <div class="err" id="ce-err"></div>
+    </div>
+  `;
+  document.getElementById('back').onclick = () => { state.view='landing'; render(); };
+  document.getElementById('ce-crear').onclick = async () => {
+    const nombre = document.getElementById('ce-nombre').value.trim();
+    const pin = document.getElementById('ce-pin').value.trim();
+    const pinAcceso = document.getElementById('ce-pin-acceso').value.trim();
+    if(!nombre || !pin){ document.getElementById('ce-err').textContent = 'Completá el nombre del grupo y un PIN.'; return; }
+    let base = slugify(nombre);
+    let codigo = base;
+    let intento = 0;
+    while(await rawStorageGet('wsmeta:' + codigo, true)){
+      intento++;
+      codigo = base + '-' + Math.random().toString(36).slice(2, 6);
+      if(intento > 6) break;
+    }
+    const publico = document.getElementById('ce-publico').checked;
+    const meta = { nombre, pinHash: await hashPin(pin), pinAccesoHash: pinAcceso ? await hashPin(pinAcceso) : null, publico, creado: Date.now() };
+    await rawStorageSet('wsmeta:' + codigo, JSON.stringify(meta), true);
+    state.workspaceId = codigo;
+    state.workspaceMeta = meta;
+    state.pinPlano = pin;
+    state.pinAccesoPlano = pinAcceso || '';
+    await storageSet('creador', 'true', false);
+    await agregarGrupoReciente(codigo, nombre);
+    state.view = 'espacio-creado'; render();
+  };
+}
+
+function renderEspacioCreado(){
+  app.innerHTML = `
+    <p class="eyebrow">¡Listo!</p>
+    <h1>Tu Panorama está creado</h1>
+    <p class="sub">Guardá el código y el PIN — los vas a necesitar de acá en más. Para invitar gente, compartiles el link de esta misma app (el que ves en tu navegador ahora) junto con este código, para que lo escriban en "Código de tu grupo" al entrar.</p>
+    <div class="card">
+      <label>Código de tu grupo</label>
+      <input type="text" readonly value="${esc(state.workspaceId)}" style="margin-bottom:16px;" onclick="this.select()" />
+      <label>Tu PIN de moderador/a</label>
+      <input type="text" readonly value="${esc(state.pinPlano || '')}" onclick="this.select()" />
+      ${state.pinAccesoPlano ? `<label style="margin-top:16px;">PIN de acceso para participantes</label><input type="text" readonly value="${esc(state.pinAccesoPlano)}" onclick="this.select()" />` : ''}
+    </div>
+    <p class="footer-note">Por seguridad, no vamos a poder mostrarte estos PIN de nuevo — guardalos ahora.</p>
+    <button class="btn btn-primary btn-cta" id="entrar-ahora">Entrar a mi Panorama →</button>
+  `;
+  document.getElementById('entrar-ahora').onclick = () => { state.view = 'role'; render(); };
+}
+
+function renderUnirseEspacio(){
+  app.innerHTML = `
+    <a class="back" id="back">← volver</a>
+    <p class="eyebrow" style="margin-top:18px;">Ingresar</p>
+    <h1>Unite a un Panorama</h1>
+    <div class="card">
+      <div class="field">
+        <label for="ue-codigo">Código del Panorama</label>
+        <input type="text" id="ue-codigo" placeholder="Ej: cooperativa-el-sauce" />
+      </div>
+      <button class="btn btn-primary" id="ue-entrar">Ingresar</button>
+      <div class="err" id="ue-err"></div>
+    </div>
+  `;
+  document.getElementById('back').onclick = () => { state.view='landing'; render(); };
+  document.getElementById('ue-entrar').onclick = async () => {
+    const codigo = document.getElementById('ue-codigo').value.trim();
+    if(!codigo){ document.getElementById('ue-err').textContent = 'Ingresá un código.'; return; }
+    const meta = await rawStorageGet('wsmeta:' + codigo, true);
+    if(!meta){ document.getElementById('ue-err').textContent = 'No encontramos un Panorama con ese código.'; return; }
+    state.workspaceId = codigo;
+    state.workspaceMeta = JSON.parse(meta.value);
+    await agregarGrupoReciente(codigo, state.workspaceMeta.nombre);
+    state.view = 'role'; render();
+  };
+}
+
+function renderAccesoPin(){
+  app.innerHTML = `
+    <a class="back" id="back">← volver</a>
+    <p class="eyebrow" style="margin-top:18px;">Acceso restringido</p>
+    <h1>Este grupo pide un PIN</h1>
+    <p class="sub">Quien coordina este grupo puso un PIN para participar. Pedíselo si no lo tenés.</p>
+    <div class="card">
+      <div class="field">
+        <label for="ap-pin">PIN de acceso</label>
+        <input type="text" id="ap-pin" placeholder="••••" maxlength="12" />
+      </div>
+      <button class="btn btn-primary" id="ap-entrar">Entrar</button>
+      <div class="err" id="ap-err"></div>
+    </div>
+  `;
+  document.getElementById('back').onclick = () => { state.view='role'; render(); };
+  const submit = async () => {
+    const v = document.getElementById('ap-pin').value.trim();
+    let ok = false;
+    if(state.workspaceMeta.pinAccesoHash){
+      ok = (await hashPin(v)) === state.workspaceMeta.pinAccesoHash;
+    } else if(state.workspaceMeta.pinAcceso){
+      ok = v === state.workspaceMeta.pinAcceso;
+      if(ok){
+        delete state.workspaceMeta.pinAcceso;
+        state.workspaceMeta.pinAccesoHash = await hashPin(v);
+        await rawStorageSet('wsmeta:' + state.workspaceId, JSON.stringify(state.workspaceMeta), true);
+      }
+    }
+    if(!ok){ document.getElementById('ap-err').textContent = 'PIN incorrecto.'; return; }
+    state.accesoDesbloqueado = true;
+    const perfilR = await storageGet('mi-perfil', false);
+    state.savedName = perfilR ? (JSON.parse(perfilR.value).name || '') : '';
+    if(!state.savedName){
+      state.view = 'p-nombre'; render(); return;
+    }
+    await loadTemas();
+    await loadAjustes();
+    for(const t of state.temas){ await cargarStatsTema(t); }
+    state.view = 'p-topics'; render();
+  };
+  document.getElementById('ap-entrar').onclick = submit;
+  document.getElementById('ap-pin').addEventListener('keydown', (e) => { if(e.key==='Enter') submit(); });
+}
+
+function renderParticipantNombre(){
+  app.innerHTML = `
+    <a class="back" id="back">← volver</a>
+    <p class="eyebrow" style="margin-top:18px;">Antes de empezar</p>
+    <h1>¿Cómo te llamás?</h1>
+    <p class="sub">Vas a usar este nombre en todos los temas de este grupo.</p>
+    <div class="card">
+      <div class="field">
+        <label for="pn-nombre">Tu nombre</label>
+        <input type="text" id="pn-nombre" placeholder="¿Cómo te llamás?" />
+      </div>
+      <button class="btn btn-primary" id="pn-continuar">Continuar</button>
+      <div class="err" id="pn-err"></div>
+    </div>
+  `;
+  document.getElementById('back').onclick = () => { state.view='role'; render(); };
+  const continuar = async () => {
+    const nombre = document.getElementById('pn-nombre').value.trim();
+    if(!nombre){ document.getElementById('pn-err').textContent = 'Contanos tu nombre para continuar.'; return; }
+    if(!(await nombreDisponibleEnGrupo(nombre))){
+      document.getElementById('pn-err').textContent = 'Ese nombre ya está en uso en este grupo. Elegí otro.';
+      return;
+    }
+    await registrarNombreEnGrupo(nombre);
+    state.savedName = nombre;
+    await storageSet('mi-perfil', JSON.stringify({ name: nombre }), false);
+    await loadTemas();
+    await loadAjustes();
+    for(const t of state.temas){ await cargarStatsTema(t); }
+    state.view = 'p-topics'; render();
+  };
+  document.getElementById('pn-continuar').onclick = continuar;
+  document.getElementById('pn-nombre').addEventListener('keydown', (e) => { if(e.key==='Enter') continuar(); });
+}
+
+function renderRole(){
+  app.innerHTML = `
+    <p class="brand-title">Panorama <span class="accent">IA</span></p>
+    <p class="eyebrow">${esc(state.workspaceMeta && state.workspaceMeta.nombre || 'Deliberación colectiva')}</p>
+    <p class="sub" style="max-width:100%; text-align:justify;">Panorama IA es un espacio de deliberación colectiva: cada persona conversa en privado con una IA sobre los temas que le importan a su grupo, y esas conversaciones se cruzan para armar un panorama común de lo que se piensa. Cada grupo tiene su propio Panorama, independiente del resto, con su propio link y sus propios moderadores.</p>
+
+    <div class="card">
+      <div class="step"><span class="step-n">1</span><p>Elegís un tema de la lista y le contás a la IA tu mirada, con tus propias palabras.</p></div>
+      <div class="step"><span class="step-n">2</span><p>Podés volver cuando quieras — tu conversación se guarda sola y la retomás donde la dejaste.</p></div>
+      <div class="step"><span class="step-n">3</span><p>En cualquier momento podés pedir "ver el panorama del grupo" para saber qué está pensando el resto.</p></div>
+    </div>
+
+    <button class="btn btn-primary btn-cta" id="go-participant">Entrar como participante →</button>
+    <p class="footer-note"><b>Importante:</b> lo que hables acá va a formar parte del panorama colectivo con tu nombre — como en una asamblea presencial, cada opinión queda a la vista de todo el grupo. No compartas información confidencial ni algo que prefieras mantener privado.</p>
+    <p class="footer-note">Al entrar también te va a pedir permiso para guardar datos compartidos de este grupo — es normal, hace falta para poder armar el panorama entre todos.</p>
+
+    <div class="mod-access">
+      <a class="back" id="go-moderator">¿Coordinás este grupo? Acceso moderador/a</a>
+      <br/><a class="back" id="go-acerca" style="margin-top:10px; display:inline-block;">Sobre Panorama IA · código abierto</a>
+      <br/><a class="back" id="go-landing" style="margin-top:10px; display:inline-block;">Cambiar de grupo</a>
+    </div>
+  `;
+  document.getElementById('go-participant').onclick = async () => {
+    if(state.workspaceMeta && (state.workspaceMeta.pinAccesoHash || state.workspaceMeta.pinAcceso) && !state.accesoDesbloqueado){
+      state.view = 'p-acceso-pin'; render(); return;
+    }
+    const perfilR = await storageGet('mi-perfil', false);
+    state.savedName = perfilR ? (JSON.parse(perfilR.value).name || '') : '';
+    if(!state.savedName){
+      state.view = 'p-nombre'; render(); return;
+    }
+    await loadTemas();
+    await loadAjustes();
+    for(const t of state.temas){ await cargarStatsTema(t); }
+    state.view = 'p-topics'; render();
+  };
+  document.getElementById('go-moderator').onclick = () => { state.view = 'mod-pin'; render(); };
+  document.getElementById('go-acerca').onclick = () => { state.view = 'acerca'; render(); };
+  document.getElementById('go-landing').onclick = () => { location.hash = ''; state.workspaceId = null; state.workspaceMeta = null; state.view = 'landing'; render(); };
+}
+
+/* ---------- PARTICIPANT: TOPIC LIST ---------- */
+function renderParticipantTopics(){
+  const visibles = ordenarTemas(state.temas.filter(t => t.aprobado !== false), state.ordenTemas);
+  const filtro = (state.filtroTemas || '').toLowerCase();
+  const filtrados = filtro ? visibles.filter(t => (t.titulo+' '+(t.descripcion||'')).toLowerCase().includes(filtro)) : visibles;
+  const items = filtrados.length ? filtrados.map(t => {
+    const disabled = t.estado !== 'activo';
+    const origenBadge = t.creadoPor === 'participante'
+      ? `<span class="badge comunidad">Propuesto por ${esc(t.creadorNombre || 'un participante')}</span>`
+      : `<span class="badge oficial">Oficial</span>`;
+    return `
+      <div class="tema-item ${disabled ? 'disabled':''}" data-id="${esc(t.id)}">
+        <div class="row1">
+          <h4>${t.fijado ? '📌 ' : ''}${esc(t.titulo)}</h4>
+          <span class="badge ${t.estado}">${t.estado}</span>
+        </div>
+        <p class="desc">${esc(t.descripcion || '')}</p>
+        <div class="meta">
+          ${origenBadge}
+          <span>Creado: ${fechaCorta(t.creado)}</span>
+          ${t._ultimaActividad ? `<span>Última actividad: ${fechaCorta(t._ultimaActividad)}</span>` : ''}
+          <span>${t._count || 0} participaron</span>
+          ${disabled ? '<span>· no admite nuevas conversaciones</span>' : ''}
+        </div>
+        <div class="tema-actions" style="margin-top:12px;">
+          ${!disabled ? `<button class="btn btn-primary btn-sm tema-enter" data-id="${esc(t.id)}">Entrar</button>` : ''}
+          <button class="btn btn-ghost btn-sm tema-registro" data-id="${esc(t.id)}">Ver panorama del grupo</button>
+        </div>
+      </div>`;
+  }).join('') : `<p class="empty">${state.temas.length ? 'Ningún tema coincide con la búsqueda.' : 'Todavía no hay temas creados. Pedile al/a la moderador/a que abra uno.'}</p>`;
+
+  app.innerHTML = `
+    <a class="back" id="back">← volver</a>
+    <p class="eyebrow" style="margin-top:18px;">Temas del grupo</p>
+    <h1>Elegí un tema</h1>
+    <div class="field">
+      <input type="text" id="buscar-tema" placeholder="Buscar por título o descripción…" value="${esc(state.filtroTemas||'')}" />
+    </div>
+    <div class="field">
+      <label for="orden-tema">Ordenar por</label>
+      <select id="orden-tema" class="select-orden">
+        <option value="actividad" ${(!state.ordenTemas || state.ordenTemas==='actividad') ? 'selected':''}>Actividad reciente</option>
+        <option value="creacion" ${state.ordenTemas==='creacion' ? 'selected':''}>Fecha de creación</option>
+        <option value="participantes" ${state.ordenTemas==='participantes' ? 'selected':''}>Más participantes</option>
+      </select>
+    </div>
+    ${state.ajustes && state.ajustes.permitirCrearTemas ? '<button class="btn btn-teal btn-sm" id="proponer-tema" style="margin-bottom:20px;">+ Proponer un tema</button>' : ''}
+    <div>${items}</div>
+  `;
+  document.getElementById('back').onclick = () => { state.view='role'; render(); };
+  const buscar = document.getElementById('buscar-tema');
+  buscar.addEventListener('input', () => { state.filtroTemas = buscar.value; renderParticipantTopics(); setTimeout(()=>{ const el=document.getElementById('buscar-tema'); if(el){ el.focus(); el.setSelectionRange(el.value.length, el.value.length);} },0); });
+  document.getElementById('orden-tema').addEventListener('change', (e) => { state.ordenTemas = e.target.value; renderParticipantTopics(); });
+  const proponer = document.getElementById('proponer-tema');
+  if(proponer) proponer.onclick = () => { state.view = 'p-nuevo-tema'; render(); };
+  document.querySelectorAll('.tema-enter').forEach(b => b.onclick = async () => {
+    const tema = state.temas.find(t => t.id === b.dataset.id);
+    state.temaActual = tema;
+    state.groupContextText = '';
+    const identidad = await tryResumirIdentidad(tema.id);
+    if(identidad){
+      state.participantId = identidad.participantId;
+      state.participantName = identidad.name;
+      const convR = await storageGet('conversacion:' + tema.id + ':' + identidad.participantId, true);
+      state.messages = convR ? (JSON.parse(convR.value).messages || []) : [];
+      state.resumed = true;
+      await cargarEncuestaEstado();
+      state.view = 'p-chat'; render();
+      if(state.messages.length === 0) await sendToAI(null);
+    } else if(state.savedName){
+      state.participantName = state.savedName;
+      state.participantId = uid();
+      state.messages = [];
+      await storageSet('mi-identidad:' + tema.id, JSON.stringify({ participantId: state.participantId, name: state.savedName }), false);
+      await cargarEncuestaEstado();
+      state.resumed = false;
+      state.view = 'p-chat'; render();
+      await sendToAI(null);
+    } else {
+      state.resumed = false;
+      state.view = 'p-start'; render();
+    }
+  });
+  document.querySelectorAll('.tema-registro').forEach(b => b.onclick = async () => {
+    const tema = state.temas.find(t => t.id === b.dataset.id);
+    state.temaActual = tema;
+    const s = await storageGet('sintesis:' + tema.id, true);
+    state.synth = s ? JSON.parse(s.value) : null;
+    if(tema.encuesta) state.encuestaResultados = await resultadosEncuesta(tema.id, tema.encuesta);
+    else state.encuestaResultados = null;
+    state.view = 'p-registro'; render();
+  });
+}
+
+async function nombreDisponibleEnGrupo(nombre){
+  const r = await storageGet('nombres-registrados', true);
+  const lista = r ? JSON.parse(r.value) : [];
+  const buscado = nombre.trim().toLowerCase();
+  return !lista.some(n => n.trim().toLowerCase() === buscado);
+}
+
+async function registrarNombreEnGrupo(nombre){
+  const r = await storageGet('nombres-registrados', true);
+  const lista = r ? JSON.parse(r.value) : [];
+  lista.push(nombre.trim());
+  await storageSet('nombres-registrados', JSON.stringify(lista), true);
+}
+
+async function tryResumirIdentidad(temaId){
+  const r = await storageGet('mi-identidad:' + temaId, false);
+  if(!r) return null;
+  try{ return JSON.parse(r.value); }catch(e){ return null; }
+}
+
+function renderParticipantNuevoTema(){
+  app.innerHTML = `
+    <a class="back" id="back">← volver</a>
+    <p class="eyebrow" style="margin-top:18px;">Proponer un tema</p>
+    <h1>Nuevo tema para deliberar</h1>
+    <div class="card">
+      <div class="field">
+        <label for="np-nombre">Tu nombre</label>
+        <input type="text" id="np-nombre" value="${esc(state.savedName || '')}" placeholder="¿Cómo te llamás?" />
+      </div>
+      <div class="field">
+        <label for="np-titulo">Título / pregunta principal</label>
+        <input type="text" id="np-titulo" placeholder="Ej: ¿Cómo podríamos mejorar la comunicación interna?" />
+      </div>
+      <div class="field">
+        <label for="np-desc">Descripción breve (guía para la IA)</label>
+        <textarea id="np-desc" rows="4" placeholder="Contexto o foco de este tema…"></textarea>
+      </div>
+      <button class="btn btn-primary" id="np-crear">Proponer tema</button>
+      <div class="err" id="np-err"></div>
+      ${state.ajustes && state.ajustes.requiereAprobacion ? '<p class="footer-note">Este tema queda pendiente de aprobación del moderador antes de ser visible para todos.</p>' : '<p class="footer-note">Este tema se publica de inmediato para todo el grupo.</p>'}
+    </div>
+  `;
+  document.getElementById('back').onclick = () => { state.view='p-topics'; render(); };
+  document.getElementById('np-crear').onclick = async () => {
+    const nombre = document.getElementById('np-nombre').value.trim();
+    const titulo = document.getElementById('np-titulo').value.trim();
+    const descripcion = document.getElementById('np-desc').value.trim();
+    if(!nombre || !titulo){ document.getElementById('np-err').textContent = 'Necesitamos tu nombre y un título para el tema.'; return; }
+    await storageSet('mi-perfil', JSON.stringify({ name: nombre }), false);
+    state.savedName = nombre;
+    const nuevo = {
+      id: uid(), titulo, descripcion, estado:'activo', creado: Date.now(), _count:0,
+      creadoPor:'participante', creadorNombre: nombre, fijado:false,
+      aprobado: !(state.ajustes && state.ajustes.requiereAprobacion)
+    };
+    await upsertTema(nuevo);
+    state.view = 'p-topics'; render();
+  };
+}
+
+function renderParticipantRegistro(){
+  const t = state.temaActual;
+  app.innerHTML = `
+    <a class="back" id="back">← todos los temas</a>
+    <p class="eyebrow" style="margin-top:18px;">Panorama del grupo</p>
+    <h1 style="font-size:26px;">${esc(t.titulo)}</h1>
+    ${t.descripcion ? `<p class="sub">${esc(t.descripcion)}</p>` : ''}
+    <div class="stat-row"><div class="stat"><span class="n">${t._count || 0}</span><span class="l">participaron</span></div></div>
+    <div class="tema-actions" style="margin-bottom:24px;">
+      <button class="btn btn-primary btn-sm" id="gen-synth" ${state.busy?'disabled':''}>${state.busy ? 'Generando…' : 'Generar / actualizar síntesis'}</button>
+      <button class="btn btn-ghost btn-sm" id="download-synth" ${state.synth ? '' : 'disabled'}>Descargar (Word)</button>
+    </div>
+    <div class="err" id="mod-err">${esc(state.error)}</div>
+    <div class="ok" id="mod-ok"></div>
+    ${renderEncuestaResultadosBloque()}
+    <hr class="divider" />
+    <div id="synth-area">${renderSynthesis()}</div>
+  `;
+  document.getElementById('back').onclick = () => { state.view='p-topics'; render(); };
+  document.getElementById('gen-synth').onclick = async () => {
+    state.busy = true; state.error=''; render();
+    const s = await generarOSintesisCacheada(t.id, true);
+    if(!s) state.error = 'Todavía no hay suficientes conversaciones para armar un panorama.';
+    state.synth = s;
+    state.busy = false; render();
+  };
+  const downloadBtn = document.getElementById('download-synth');
+  if(downloadBtn) downloadBtn.onclick = () => {
+    try{
+      const html = formatSynthAsWordHtml(t, state.synth);
+      const blob = new Blob(['\ufeff', html], { type: 'application/msword' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'sintesis_' + t.titulo.toLowerCase().replace(/[^a-z0-9]+/g,'_').slice(0,40) + '.doc';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      document.getElementById('mod-ok').textContent = 'Descarga iniciada.';
+    }catch(e){ document.getElementById('mod-ok').textContent = ''; document.getElementById('mod-err').textContent = 'No se pudo descargar el archivo.'; }
+  };
+}
+
+function renderParticipantStart(){
+  const t = state.temaActual;
+  app.innerHTML = `
+    <a class="back" id="back">← otros temas</a>
+    <p class="eyebrow" style="margin-top:18px;">Conversación individual</p>
+    <h1>Antes de empezar</h1>
+    <div class="topic-banner">${esc(t.titulo)}${t.descripcion ? ' — ' + esc(t.descripcion) : ''}</div>
+    <div class="card">
+      <div class="field">
+        <label for="name-input">Tu nombre</label>
+        <input type="text" id="name-input" placeholder="¿Cómo te llamás?" value="${esc(state.savedName || '')}" />
+      </div>
+      <button class="btn btn-primary" id="start-chat">Empezar a conversar</button>
+      <div class="err" id="err"></div>
+    </div>
+  `;
+  document.getElementById('back').onclick = () => { state.view='p-topics'; render(); };
+  document.getElementById('start-chat').onclick = async () => {
+    const name = document.getElementById('name-input').value.trim();
+    if(!name){ document.getElementById('err').textContent = 'Contanos tu nombre para empezar.'; return; }
+    if(!(await nombreDisponibleEnGrupo(name))){
+      document.getElementById('err').textContent = 'Ese nombre ya está en uso en este grupo. Elegí otro.';
+      return;
+    }
+    await registrarNombreEnGrupo(name);
+    state.participantName = name;
+    state.participantId = uid();
+    state.messages = [];
+    await storageSet('mi-identidad:' + state.temaActual.id, JSON.stringify({ participantId: state.participantId, name }), false);
+    await storageSet('mi-perfil', JSON.stringify({ name }), false);
+    await cargarEncuestaEstado();
+    state.view = 'p-chat';
+    render();
+    await sendToAI(null);
+  };
+}
+
+/* ---------- PARTICIPANT: CHAT ---------- */
+function chatSystemPrompt(){
+  const t = state.temaActual;
+  let p = `Estás conversando con ${state.participantName} en un espacio de deliberación colectiva, sobre este tema: "${t.titulo}".`;
+  if(t.descripcion) p += ` Guía sobre qué busca este tema: ${t.descripcion}.`;
+  p += ` Respondé siempre en el mismo idioma en el que te escriba el participante, sin importar en qué idioma esté redactado el título o la descripción del tema — si te escribe en inglés, portugués, o cualquier otro idioma, seguí la charla en ese idioma de ahí en más. Si todavía no escribió nada (es tu primer mensaje), arrancá en español.`;
+  p += ` No sos un formulario ni una entrevista rígida de preguntas y respuestas: sostené una charla fluida y humana, como lo haría alguien que escucha con genuina atención. Tu rol es ayudar a la persona a pensar en voz alta, ordenar sus propias ideas y expresar su postura con la mayor claridad posible — no aportar tu propia opinión sobre el tema ni influir en qué debería pensar. Si la persona duda, se contradice o no encuentra las palabras, ayudala a explorarlo con preguntas abiertas o reformulando lo que dijo para ver si la interpretaste bien, en vez de simplemente pasar a la siguiente pregunta. Si te pide una opinión directa sobre el tema, podés ayudarla a pensarlo desde distintos ángulos sin tomar postura vos. Variá el ritmo: a veces una pregunta, a veces solo una reflexión breve o una devolución de lo que dijo. Tus intervenciones son cortas (2 a 4 oraciones) y con un tono cercano, nunca protocolar ni grandilocuente.
+
+Tenés disponible una herramienta de búsqueda web. Usala cuando el participante te pida un dato, una noticia, o quiera chequear algo concreto relacionado al tema — no busques por iniciativa propia sin que aporte a la charla. Cuando busques, contá lo que encontraste con tus propias palabras, de forma breve, sin citar textualmente párrafos largos, y aclarando de dónde salió el dato si es relevante. La búsqueda es para informar mejor la conversación, no para reemplazar la perspectiva de la persona ni para que vos tomes postura con lo que encontrás.
+
+También tenés disponible una herramienta para consultar las síntesis de los otros temas de este mismo grupo (no este). Usala cuando el participante pregunte si algo ya se habló en otro tema, si su idea se conecta con otro tema, o pida un panorama general de todo lo que se habló en el grupo hasta ahora. Si un tema todavía no tiene síntesis generada, decilo con naturalidad en vez de inventar contenido.
+
+Este espacio busca ser una alternativa al discurso de odio, la desinformación viral y el enganche berreta de las redes sociales. Mantené siempre un tono respetuoso, calmo y riguroso; priorizá la información verificable por sobre lo sensacionalista, y si la conversación se calienta o alguien busca provocar en vez de deliberar, mantené la calma y devolvé el foco al tema con amabilidad pero sin ambigüedad.
+
+Para tu primer mensaje (el de apertura), sé simple y concreto, sin frases genéricas tipo "pensar juntos hacia dónde vamos": en una o dos oraciones cortas saludá por su nombre y contale para qué es este espacio (que es una charla individual para recoger su mirada sobre el tema antes de ponerla en común con la del resto), y después hacé una pregunta abierta puntual que la invite a arrancar por donde quiera.
+
+Cuando sientas que ya expresó su punto de vista con claridad, podés sugerirle amablemente que puede finalizar cuando quiera con el botón de abajo.`;
+  if(state.groupContextText){
+    p += `\n\nYa se le mostró a esta persona el panorama actual del grupo sobre este tema (más abajo). A partir de ahora podés hacer referencia a él con naturalidad: explicar matices, responder preguntas sobre por qué otros piensan distinto, o profundizar en una propuesta puntual —incluso si es minoritaria— con el nombre de quién la dijo, si te lo pide, para ayudarla a desarrollarla. Si te pide que traduzcas el panorama o cualquier parte de él a otro idioma, hacelo directamente. Siempre sin opinar vos mismo/a sobre qué postura es mejor.\n\nPanorama actual del grupo:\n${state.groupContextText}`;
+  }
+  return p;
+}
+
+async function consultarOtrosTemas(input){
+  const listaTemas = (await getTemasFrescos()).filter(t => t.id !== state.temaActual.id && t.aprobado !== false);
+  let candidatos = listaTemas;
+  if(input && input.alcance === 'un_tema_especifico' && input.busqueda){
+    const q = input.busqueda.toLowerCase();
+    const filtrados = listaTemas.filter(t => (t.titulo + ' ' + (t.descripcion||'')).toLowerCase().includes(q));
+    if(filtrados.length) candidatos = filtrados;
+  }
+  if(candidatos.length === 0) return 'No hay otros temas en este grupo todavía.';
+  let out = '';
+  for(const t of candidatos){
+    const s = await storageGet('sintesis:' + t.id, true);
+    if(s){
+      let parsed; try{ parsed = JSON.parse(s.value); }catch(e){ parsed = null; }
+      if(parsed){
+        out += `\n\n--- Tema: ${t.titulo} ---\nResumen: ${parsed.resumen || ''}\nConsensos: ${(parsed.consensos||[]).map(itemTexto).join(' / ')}\nPropuestas: ${(parsed.propuestas||[]).map(p=>p.titulo).join(' / ')}`;
+        continue;
+      }
+    }
+    out += `\n\n--- Tema: ${t.titulo} ---\n(Todavía no tiene una síntesis generada; hay ${t._count || 0} conversaciones esperando ser sintetizadas)`;
+  }
+  return out;
+}
+
+const HERRAMIENTA_OTROS_TEMAS = {
+  name: "consultar_otros_temas",
+  description: "Consulta las síntesis de otros temas del mismo grupo de deliberación (no este). Usala cuando el participante pregunte si algo ya se habló en otro tema, si su idea se relaciona con otro tema, o pida un panorama general de todo lo que se habló en el grupo.",
+  input_schema: {
+    type: "object",
+    properties: {
+      alcance: { type: "string", enum: ["todos_los_temas", "un_tema_especifico"], description: "todos_los_temas para un panorama general del grupo; un_tema_especifico si busca algo puntual" },
+      busqueda: { type: "string", description: "palabras clave del tema puntual a buscar (solo si alcance es un_tema_especifico)" }
+    },
+    required: ["alcance"]
+  }
+};
+
+async function chatConHerramientas(mensajesIniciales, system){
+  const tools = [{ type: "web_search_20250305", name: "web_search" }, HERRAMIENTA_OTROS_TEMAS];
+  let mensajes = mensajesIniciales.slice();
+  for(let vuelta = 0; vuelta < 4; vuelta++){
+    const data = await callClaudeFull(mensajes, system, tools);
+    const usosHerramienta = (data.content || []).filter(b => b.type === 'tool_use' && b.name === 'consultar_otros_temas');
+    if(usosHerramienta.length === 0){
+      return (data.content || []).map(b => b.text || '').join('');
+    }
+    mensajes.push({ role: 'assistant', content: data.content });
+    const resultados = [];
+    for(const tu of usosHerramienta){
+      const texto = await consultarOtrosTemas(tu.input);
+      resultados.push({ type: 'tool_result', tool_use_id: tu.id, content: texto });
+    }
+    mensajes.push({ role: 'user', content: resultados });
+  }
+  return 'No pude terminar de procesar tu pregunta, probá reformularla.';
+}
+
+async function sendToAI(userText){
+  state.busy = true; state.error='';
+  if(userText) state.messages.push({ role:'user', content:userText });
+  render();
+  try{
+    const historialParaAPI = state.messages.filter(m => !(m.content||'').startsWith('__PANORAMA__'));
+    const reply = await chatConHerramientas(historialParaAPI.length ? historialParaAPI : [{role:'user', content:'Hola'}], chatSystemPrompt());
+    state.messages.push({ role:'assistant', content: reply });
+    const ahora = Date.now();
+    await storageSet('conversacion:' + state.temaActual.id + ':' + state.participantId, JSON.stringify({
+      name: state.participantName, temaId: state.temaActual.id, messages: state.messages, finished:false, ts: ahora
+    }), true);
+    await patchTema(state.temaActual.id, x => { x.ultimaActividad = ahora; });
+  }catch(e){
+    state.error = 'No se pudo conectar con la IA. (' + e.message + ')';
+  }
+  state.busy = false;
+  render();
+}
+
+async function verPanoramaGrupo(){
+  state.busy = true; state.error=''; render();
+  try{
+    const s = await generarOSintesisCacheada(state.temaActual.id, false);
+    if(!s){ state.error = 'Todavía no hay suficientes conversaciones para armar un panorama.'; state.busy=false; render(); return; }
+    state.groupContextText = formatSynthAsText(s);
+    state.messages.push({ role:'assistant', content: '__PANORAMA__' + JSON.stringify(s) });
+    const ahora = Date.now();
+    await storageSet('conversacion:' + state.temaActual.id + ':' + state.participantId, JSON.stringify({
+      name: state.participantName, temaId: state.temaActual.id, messages: state.messages, finished:false, ts: ahora
+    }), true);
+    await patchTema(state.temaActual.id, x => { x.ultimaActividad = ahora; });
+  }catch(e){
+    state.error = 'No se pudo generar el panorama. Probá de nuevo.';
+  }
+  state.busy = false;
+  render();
+}
+
+function formatSynthAsWordHtml(tema, s){
+  const li = (c) => `<li>${itemTexto(c)}${itemNombres(c).length ? ' <i>— ' + itemNombres(c).join(', ') + '</i>' : ''}</li>`;
+  const propHtml = (s.propuestas||[]).map(p => `<li><b>${p.titulo || ''}:</b> ${p.descripcion || ''} <i>— ${(p.participantes||[]).join(', ')}</i></li>`).join('');
+  let encuestaHtml = '';
+  if(tema.encuesta && state.encuestaResultados){
+    const res = state.encuestaResultados;
+    const filas = tema.encuesta.opciones.map((op, i) => {
+      const votos = res.counts[i] || 0;
+      const pct = res.totalVotantes ? Math.round(votos / res.totalVotantes * 100) : 0;
+      return `<li>${op}: ${pct}% (${votos} voto${votos===1?'':'s'})</li>`;
+    }).join('');
+    encuestaHtml = `<h2 style="color:#9C7A3C;">Encuesta: ${tema.encuesta.pregunta}</h2><ul>${filas}</ul><p><i>${res.totalVotantes} persona${res.totalVotantes===1?'':'s'} votaron.</i></p>`;
+  }
+  return `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+<head><meta charset="utf-8"><title>${tema.titulo}</title></head>
+<body style="font-family:Calibri,Arial,sans-serif;">
+<h1 style="color:#1F3B57;">${tema.titulo}</h1>
+${tema.descripcion ? `<p><i>${tema.descripcion}</i></p>` : ''}
+<h2 style="color:#9C7A3C;">Resumen</h2><p>${s.resumen || ''}</p>
+<h2 style="color:#9C7A3C;">Consensos</h2><ul>${(s.consensos||[]).map(li).join('') || '<li>Sin datos suficientes.</li>'}</ul>
+<h2 style="color:#9C7A3C;">Matices y desacuerdos</h2><ul>${(s.matices||[]).map(li).join('') || '<li>Sin datos suficientes.</li>'}</ul>
+<h2 style="color:#9C7A3C;">Propuestas</h2><ul>${propHtml || '<li>Sin datos suficientes.</li>'}</ul>
+${(s.comparacion||[]).length >= 2 ? `<h2 style="color:#9C7A3C;">Posturas enfrentadas</h2><table border="1" cellpadding="6" style="border-collapse:collapse;"><tr><td></td>${s.comparacion.map(c=>`<td><b>${c.titulo||''}</b></td>`).join('')}</tr><tr><td>Postura</td>${s.comparacion.map(c=>`<td>${c.descripcion||''}</td>`).join('')}</tr><tr><td>Sostenida por</td>${s.comparacion.map(c=>`<td>${(c.participantes||[]).join(', ')}</td>`).join('')}</tr></table>` : ''}
+${(s.pasos||[]).length ? `<h2 style="color:#9C7A3C;">Plan de acción</h2><ol>${s.pasos.map(p=>`<li>${p}</li>`).join('')}</ol>` : ''}
+${encuestaHtml}
+</body></html>`;
+}
+
+function formatSynthAsText(s){
+  let out = 'Resumen: ' + (s.resumen||'') + '\n';
+  out += 'Consensos: ' + (s.consensos||[]).map(c => itemTexto(c) + (itemNombres(c).length ? ' ('+itemNombres(c).join(', ')+')' : '')).join(' / ') + '\n';
+  out += 'Matices: ' + (s.matices||[]).map(c => itemTexto(c) + (itemNombres(c).length ? ' ('+itemNombres(c).join(', ')+')' : '')).join(' / ') + '\n';
+  out += 'Propuestas: ' + (s.propuestas||[]).map(p => p.titulo).join(' / ');
+  return out;
+}
+
+function formatSynthAsFile(tema, s){
+  let out = tema.titulo.toUpperCase() + '\n';
+  if(tema.descripcion) out += tema.descripcion + '\n';
+  out += '\n== RESUMEN ==\n' + (s.resumen||'') + '\n';
+  out += '\n== CONSENSOS ==\n' + (s.consensos||[]).map(c => '- ' + itemTexto(c) + (itemNombres(c).length ? ' — ' + itemNombres(c).join(', ') : '')).join('\n') + '\n';
+  out += '\n== MATICES Y DESACUERDOS ==\n' + (s.matices||[]).map(c => '- ' + itemTexto(c) + (itemNombres(c).length ? ' — ' + itemNombres(c).join(', ') : '')).join('\n') + '\n';
+  out += '\n== PROPUESTAS ==\n' + (s.propuestas||[]).map(p => '- ' + p.titulo + ': ' + (p.descripcion||'') + ' (' + (p.participantes||[]).join(', ') + ')').join('\n');
+  return out;
+}
+
+function renderMsgContent(m){
+  if(m.role === 'assistant' && m.content.startsWith('__PANORAMA__')){
+    const s = JSON.parse(m.content.slice('__PANORAMA__'.length));
+    const consensos = (s.consensos||[]).map(c=>`<li>${esc(itemTexto(c))}${itemNombres(c).length ? ' — <i>'+itemNombres(c).map(esc).join(', ')+'</i>' : ''}</li>`).join('');
+    const propuestas = (s.propuestas||[]).map(p=>`<li>${esc(p.titulo)}</li>`).join('');
+    return `<div class="msg panorama"><span class="ptitle">Panorama del grupo hasta ahora</span>
+      <p>${esc(s.resumen||'')}</p>
+      ${consensos ? '<b>Consensos:</b><ul>'+consensos+'</ul>' : ''}
+      ${propuestas ? '<b>Propuestas:</b><ul>'+propuestas+'</ul>' : ''}
+      </div>`;
+  }
+  return `<div class="msg ${m.role === 'user' ? 'user' : 'ai'}">${esc(m.content)}</div>`;
+}
+
+function renderParticipantChat(){
+  const log = state.messages.map(renderMsgContent).join('');
+  app.innerHTML = `
+    <a class="back" id="back">← volver a temas</a>
+    <p class="eyebrow" style="margin-top:18px;">Conversando con Panorama IA</p>
+    <h1 style="font-size:24px;">${esc(state.participantName)}</h1>
+    <div class="topic-banner">${esc(state.temaActual.titulo)}</div>
+    ${state.resumed && state.messages.length ? '<p class="ok" style="margin-top:-16px;">Retomamos tu conversación anterior sobre este tema.</p>' : ''}
+
+    <div class="card">
+      <div class="chat-log" id="log">
+        ${log}
+        ${state.busy ? '<div class="msg ai typing">escribiendo…</div>' : ''}
+      </div>
+      <div class="chat-actions">
+        <button class="btn btn-teal btn-sm" id="ver-panorama" ${state.busy?'disabled':''}>Ver panorama del grupo hasta ahora</button>
+      </div>
+      <div class="chat-input-row">
+        <textarea id="msg-input" placeholder="Escribí tu respuesta…" ${state.busy?'disabled':''}></textarea>
+        <button class="btn btn-primary" id="send-btn" ${state.busy?'disabled':''}>Enviar</button>
+      </div>
+      <div class="err">${esc(state.error)}</div>
+      ${state.error ? '<button class="btn btn-ghost btn-sm" id="retry-btn" style="margin-top:8px;">Reintentar</button>' : ''}
+    </div>
+    <p class="footer-note">Tu conversación se guarda sola a medida que avanza. Podés volver cuando quieras y vas a retomarla desde donde la dejaste.</p>
+    ${renderEncuestaWidget()}
+  `;
+  const logEl = document.getElementById('log');
+  logEl.scrollTop = logEl.scrollHeight;
+  document.getElementById('back').onclick = () => { state.view = 'p-topics'; render(); };
+  const input = document.getElementById('msg-input');
+  const send = async () => {
+    const text = input.value.trim();
+    if(!text || state.busy) return;
+    input.value = '';
+    await sendToAI(text);
+  };
+  document.getElementById('send-btn').onclick = send;
+  input.addEventListener('keydown', (e) => { if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); }});
+  const retryBtn = document.getElementById('retry-btn');
+  if(retryBtn) retryBtn.onclick = () => sendToAI(null);
+  document.getElementById('ver-panorama').onclick = verPanoramaGrupo;
+  document.querySelectorAll('.encuesta-opcion').forEach(b => b.onclick = async () => {
+    const i = parseInt(b.dataset.i, 10);
+    const enc = state.temaActual.encuesta;
+    let nuevo;
+    if(enc.multiple){
+      nuevo = state.miVoto.includes(i) ? state.miVoto.filter(x => x !== i) : [...state.miVoto, i];
+    } else {
+      nuevo = (state.miVoto.length === 1 && state.miVoto[0] === i) ? [] : [i];
+    }
+    state.miVoto = nuevo;
+    await storageSet('voto:' + state.temaActual.id + ':' + state.participantId, JSON.stringify(nuevo), true);
+    state.encuestaResultados = await resultadosEncuesta(state.temaActual.id, enc);
+    render();
+  });
+}
+
+function renderEncuestaWidget(){
+  const t = state.temaActual;
+  if(!t.encuesta) return '';
+  const enc = t.encuesta;
+  const res = state.encuestaResultados || { counts: enc.opciones.map(()=>0), totalVotantes: 0 };
+  const misVotos = state.miVoto || [];
+  const opcionesHtml = enc.opciones.map((op, i) => {
+    const votos = res.counts[i] || 0;
+    const pct = res.totalVotantes ? Math.round(votos / res.totalVotantes * 100) : 0;
+    const marcado = misVotos.includes(i);
+    return `
+      <button class="encuesta-opcion ${marcado ? 'marcada':''}" data-i="${i}">
+        <span class="eo-bar" style="width:${pct}%"></span>
+        <span class="eo-check">${marcado ? '✓' : ''}</span>
+        <span class="eo-texto">${esc(op)}</span>
+        <span class="eo-pct">${pct}% · ${votos}</span>
+      </button>`;
+  }).join('');
+  return `
+    <div class="card encuesta-card">
+      <p class="eyebrow" style="margin-bottom:6px;">Encuesta · ${enc.multiple ? 'elegí una o más opciones' : 'elegí una opción'}</p>
+      <h4 style="font-family:'Fraunces',serif; margin:0 0 12px; font-size:17px; color:var(--ink);">${esc(enc.pregunta)}</h4>
+      ${opcionesHtml}
+      <p class="footer-note" style="margin-top:10px;">${res.totalVotantes} persona${res.totalVotantes===1?'':'s'} votaron hasta ahora. Podés cambiar tu respuesta cuando quieras.</p>
+    </div>`;
+}
+
+function renderParticipantDone(){
+  app.innerHTML = `
+    <p class="eyebrow">Gracias</p>
+    <h1>Tu perspectiva ya forma parte del panorama</h1>
+    <p class="sub">Cuando el grupo avance, la síntesis colectiva va a reunir tu voz junto con la de los demás.</p>
+    <button class="btn btn-ghost" id="restart">Volver al inicio</button>
+  `;
+  document.getElementById('restart').onclick = () => {
+    state = { view:'role', temas:[], temaActual:null, participantName:'', participantId:null, messages:[], groupContextText:'', busy:false, error:'', synth:null, count:0 };
+    render();
+  };
+}
+
+/* ---------- MODERATOR ---------- */
+function renderModPin(){
+  app.innerHTML = `
+    <a class="back" id="back">← volver</a>
+    <p class="eyebrow" style="margin-top:18px;">Acceso protegido</p>
+    <h1>PIN de moderador/a</h1>
+    <p class="sub">Ingresá el PIN para entrar al panel de moderación.</p>
+    <div class="card">
+      <div class="field">
+        <label for="pin-input">PIN</label>
+        <input type="text" id="pin-input" placeholder="••••" maxlength="8" />
+      </div>
+      <button class="btn btn-primary" id="pin-submit">Entrar</button>
+      <div class="err" id="pin-err"></div>
+      <a class="back" id="olvide-pin" style="margin-top:14px; display:inline-block;">¿Olvidaste tu PIN?</a>
+    </div>
+  `;
+  document.getElementById('back').onclick = () => { state.view='role'; render(); };
+  document.getElementById('olvide-pin').onclick = () => { state.view = 'mod-recuperar-pin'; render(); };
+  const submit = async () => {
+    const v = document.getElementById('pin-input').value.trim();
+    let ok = false;
+    if(state.workspaceMeta.pinHash){
+      ok = (await hashPin(v)) === state.workspaceMeta.pinHash;
+    } else if(state.workspaceMeta.pin){
+      // Grupo creado antes de la versión con PIN hasheado: acepta el formato viejo una vez
+      // y migra este grupo al formato seguro nuevo de manera transparente.
+      ok = v === state.workspaceMeta.pin;
+      if(ok){
+        delete state.workspaceMeta.pin;
+        state.workspaceMeta.pinHash = await hashPin(v);
+        await rawStorageSet('wsmeta:' + state.workspaceId, JSON.stringify(state.workspaceMeta), true);
+      }
+    }
+    if(!ok){ document.getElementById('pin-err').textContent = 'PIN incorrecto.'; return; }
+    await loadTemas();
+    await loadAjustes();
+    for(const t of state.temas){ await cargarStatsTema(t); }
+    state.view = 'moderator'; render();
+  };
+  document.getElementById('pin-submit').onclick = submit;
+  document.getElementById('pin-input').addEventListener('keydown', (e) => { if(e.key==='Enter') submit(); });
+}
+
+async function renderModRecuperarPin(){
+  const marca = await storageGet('creador', false);
+  if(!marca){
+    app.innerHTML = `
+      <a class="back" id="back">← volver</a>
+      <p class="eyebrow" style="margin-top:18px;">Recuperar PIN</p>
+      <h1>No podemos verificarlo</h1>
+      <p class="sub">Solo la cuenta de Claude que creó este grupo puede recuperar el PIN. Si estás usando esa misma cuenta y ves este mensaje, puede que la marca de creador se haya perdido (por ejemplo, si borraste datos del navegador) — en ese caso no hay forma de recuperarlo.</p>
+      <button class="btn btn-ghost" id="volver">Volver</button>
+    `;
+    document.getElementById('back').onclick = () => { state.view='mod-pin'; render(); };
+    document.getElementById('volver').onclick = () => { state.view='mod-pin'; render(); };
+    return;
+  }
+  app.innerHTML = `
+    <a class="back" id="back">← volver</a>
+    <p class="eyebrow" style="margin-top:18px;">Recuperar PIN</p>
+    <h1>Elegí un PIN nuevo</h1>
+    <p class="sub">Reconocimos que esta cuenta creó este grupo. Podés definir un PIN de moderador/a nuevo.</p>
+    <div class="card">
+      <div class="field">
+        <label for="rp-pin">PIN nuevo</label>
+        <input type="text" id="rp-pin" placeholder="Ej: 4 a 8 caracteres" maxlength="12" />
+      </div>
+      <button class="btn btn-primary" id="rp-guardar">Guardar PIN nuevo y entrar</button>
+      <div class="err" id="rp-err"></div>
+    </div>
+  `;
+  document.getElementById('back').onclick = () => { state.view='mod-pin'; render(); };
+  document.getElementById('rp-guardar').onclick = async () => {
+    const nuevo = document.getElementById('rp-pin').value.trim();
+    if(!nuevo){ document.getElementById('rp-err').textContent = 'Ingresá un PIN.'; return; }
+    const metaR = await rawStorageGet('wsmeta:' + state.workspaceId, true);
+    const meta = metaR ? JSON.parse(metaR.value) : state.workspaceMeta;
+    delete meta.pin;
+    meta.pinHash = await hashPin(nuevo);
+    await rawStorageSet('wsmeta:' + state.workspaceId, JSON.stringify(meta), true);
+    state.workspaceMeta = meta;
+    await loadTemas();
+    await loadAjustes();
+    for(const t of state.temas){ await cargarStatsTema(t); }
+    state.view = 'moderator'; render();
+  };
+}
+
+function renderModerator(){
+  if(!state.ajustes) state.ajustes = { permitirCrearTemas:false, requiereAprobacion:true };
+  const pendientes = state.temas.filter(t => t.aprobado === false);
+  const publicados = ordenarTemas(state.temas.filter(t => t.estado !== 'terminado' && t.aprobado !== false), state.ordenTemas);
+  const terminados = ordenarTemas(state.temas.filter(t => t.estado === 'terminado' && t.aprobado !== false), state.ordenTemas);
+  const origenBadge = (t) => t.creadoPor === 'participante'
+    ? `<span class="badge comunidad">Propuesto por ${esc(t.creadorNombre || 'un participante')}</span>`
+    : `<span class="badge oficial">Oficial</span>`;
+  const itemHtml = (t) => `
+    <div class="tema-item" data-id="${esc(t.id)}">
+      <div class="row1">
+        <h4>${t.fijado ? '📌 ' : ''}${esc(t.titulo)}</h4>
+        <span class="badge ${t.estado}">${t.estado}</span>
+      </div>
+      <p class="desc">${esc(t.descripcion || '')}</p>
+      <div class="meta">${origenBadge(t)}<span>Creado: ${fechaCorta(t.creado)}</span>${t._ultimaActividad ? `<span>Última actividad: ${fechaCorta(t._ultimaActividad)}</span>` : ''}<span>${t._count || 0} participaron</span></div>
+      <div class="tema-actions">
+        <button class="btn btn-ghost btn-sm tema-abrir" data-id="${esc(t.id)}">Ver / gestionar</button>
+      </div>
+    </div>`;
+  const pendienteHtml = (t) => `
+    <div class="tema-item" data-id="${esc(t.id)}">
+      <div class="row1"><h4>${esc(t.titulo)}</h4><span class="badge pausado">pendiente</span></div>
+      <p class="desc">${esc(t.descripcion || '')}</p>
+      <div class="meta">${origenBadge(t)}<span>${fechaCorta(t.creado)}</span></div>
+      <div class="tema-actions">
+        <button class="btn btn-primary btn-sm aprobar-tema" data-id="${esc(t.id)}">Aprobar</button>
+        <button class="btn btn-danger btn-sm rechazar-tema" data-id="${esc(t.id)}">Rechazar</button>
+      </div>
+    </div>`;
+  app.innerHTML = `
+    <a class="back" id="back">← volver</a>
+    <p class="eyebrow" style="margin-top:18px;">Panel de moderación</p>
+    <h1>Temas del grupo</h1>
+
+    <div class="card">
+      <label class="toggle-row"><input type="checkbox" id="ajuste-crear" ${state.ajustes.permitirCrearTemas ? 'checked' : ''} /> Permitir que los participantes propongan temas</label>
+      <label class="toggle-row"><input type="checkbox" id="ajuste-aprobar" ${state.ajustes.requiereAprobacion ? 'checked' : ''} /> Requerir aprobación antes de publicarlos</label>
+      <label class="toggle-row"><input type="checkbox" id="ajuste-publico" ${state.workspaceMeta.publico ? 'checked' : ''} /> Grupo público (aparece en el directorio, cualquiera puede verlo y sumarse)</label>
+    </div>
+
+    ${pendientes.length ? `<p class="eyebrow">Pendientes de aprobación (${pendientes.length})</p>` + pendientes.map(pendienteHtml).join('') + '<hr class="divider" />' : ''}
+
+    <button class="btn btn-primary" id="nuevo-tema" style="margin-bottom:20px;">+ Crear tema nuevo</button>
+    <div class="field" style="max-width:260px;">
+      <label for="orden-tema">Ordenar por</label>
+      <select id="orden-tema" class="select-orden">
+        <option value="actividad" ${(!state.ordenTemas || state.ordenTemas==='actividad') ? 'selected':''}>Actividad reciente</option>
+        <option value="creacion" ${state.ordenTemas==='creacion' ? 'selected':''}>Fecha de creación</option>
+        <option value="participantes" ${state.ordenTemas==='participantes' ? 'selected':''}>Más participantes</option>
+      </select>
+    </div>
+    <div>${publicados.length ? publicados.map(itemHtml).join('') : '<p class="empty">Todavía no hay temas publicados.</p>'}</div>
+    ${terminados.length ? `<hr class="divider" /><p class="eyebrow">Historial</p>` + terminados.map(itemHtml).join('') : ''}
+    <hr class="divider" />
+    <button class="btn btn-danger" id="reset-all">Borrar todos los datos del grupo</button>
+  `;
+  document.getElementById('back').onclick = () => { state.view='role'; render(); };
+  document.getElementById('nuevo-tema').onclick = () => { state.view='mod-new-tema'; render(); };
+  document.getElementById('ajuste-crear').onchange = async (e) => { state.ajustes.permitirCrearTemas = e.target.checked; await saveAjustes(); };
+  document.getElementById('ajuste-aprobar').onchange = async (e) => { state.ajustes.requiereAprobacion = e.target.checked; await saveAjustes(); };
+  document.getElementById('ajuste-publico').onchange = async (e) => {
+    state.workspaceMeta.publico = e.target.checked;
+    await rawStorageSet('wsmeta:' + state.workspaceId, JSON.stringify(state.workspaceMeta), true);
+  };
+  document.getElementById('orden-tema').addEventListener('change', (e) => { state.ordenTemas = e.target.value; render(); });
+  document.querySelectorAll('.tema-abrir').forEach(b => b.onclick = async () => {
+    state.temaActual = state.temas.find(t => t.id === b.dataset.id);
+    state.editingTema = false;
+    const s = await storageGet('sintesis:' + state.temaActual.id, true);
+    state.synth = s ? JSON.parse(s.value) : null;
+    if(state.temaActual.encuesta) state.encuestaResultados = await resultadosEncuesta(state.temaActual.id, state.temaActual.encuesta);
+    else state.encuestaResultados = null;
+    state.view = 'mod-tema'; render();
+  });
+  document.querySelectorAll('.aprobar-tema').forEach(b => b.onclick = async () => {
+    await patchTema(b.dataset.id, x => { x.aprobado = true; });
+    render();
+  });
+  document.querySelectorAll('.rechazar-tema').forEach(b => b.onclick = async () => {
+    if(!confirm('¿Rechazar y eliminar este tema propuesto?')) return;
+    await removeTemaGlobal(b.dataset.id);
+    render();
+  });
+  document.getElementById('reset-all').onclick = async () => {
+    if(!confirm('Esto borra TODOS los temas y conversaciones de este grupo, sin posibilidad de deshacerlo. ¿Continuar?')) return;
+    const convKeys = await storageList('conversacion:', true);
+    for(const k of convKeys) await storageDelete(k, true);
+    const synthKeys = await storageList('sintesis:', true);
+    for(const k of synthKeys) await storageDelete(k, true);
+    await storageDelete('config:temas', true);
+    await storageDelete('config:ajustes', true);
+    state.temas = [];
+    state.ajustes = { permitirCrearTemas:false, requiereAprobacion:true };
+    render();
+  };
+}
+
+function renderModNewTema(){
+  app.innerHTML = `
+    <a class="back" id="back">← volver</a>
+    <p class="eyebrow" style="margin-top:18px;">Nuevo tema</p>
+    <h1>Crear un tema para deliberar</h1>
+    <div class="card">
+      <div class="field">
+        <label for="titulo-input">Título / pregunta principal</label>
+        <input type="text" id="titulo-input" placeholder="Ej: ¿Qué prioridades deberíamos tener este año?" />
+      </div>
+      <div class="field">
+        <label for="desc-input">Descripción breve (guía para la IA)</label>
+        <textarea id="desc-input" rows="4" placeholder="Contexto o foco que la IA debería tener en cuenta al conversar sobre este tema…"></textarea>
+      </div>
+      <label class="toggle-row"><input type="checkbox" id="tiene-encuesta" /> Agregar una encuesta a este tema</label>
+      <div id="encuesta-builder" style="display:none; margin-top:8px;">
+        <div class="field">
+          <label for="encuesta-pregunta">Pregunta de la encuesta</label>
+          <input type="text" id="encuesta-pregunta" placeholder="Ej: ¿Qué día nos juntamos?" />
+        </div>
+        <div class="field">
+          <label>Opciones</label>
+          <div id="encuesta-opciones"></div>
+          <button type="button" class="btn btn-ghost btn-sm" id="agregar-opcion" style="margin-top:8px;">+ Agregar opción</button>
+        </div>
+        <label class="toggle-row"><input type="checkbox" id="encuesta-multiple" /> Permitir elegir más de una opción</label>
+      </div>
+      <button class="btn btn-primary" id="crear" style="margin-top:8px;">Crear tema</button>
+      <div class="err" id="err"></div>
+    </div>
+  `;
+  document.getElementById('back').onclick = () => { state.view='moderator'; render(); };
+  const opcionesDiv = document.getElementById('encuesta-opciones');
+  const agregarOpcionInput = () => {
+    const row = document.createElement('div');
+    row.style.cssText = 'margin-bottom:8px; display:flex; gap:8px; align-items:center;';
+    row.innerHTML = `<input type="text" class="opcion-encuesta" placeholder="Opción" style="flex:1;" /><button type="button" class="btn btn-ghost btn-sm quitar-opcion" style="flex:none; padding:8px 12px;">−</button>`;
+    row.querySelector('.quitar-opcion').onclick = () => row.remove();
+    opcionesDiv.appendChild(row);
+  };
+  agregarOpcionInput(); agregarOpcionInput();
+  document.getElementById('agregar-opcion').onclick = agregarOpcionInput;
+  document.getElementById('tiene-encuesta').addEventListener('change', (e) => {
+    document.getElementById('encuesta-builder').style.display = e.target.checked ? 'block' : 'none';
+  });
+  document.getElementById('crear').onclick = async () => {
+    const titulo = document.getElementById('titulo-input').value.trim();
+    const descripcion = document.getElementById('desc-input').value.trim();
+    if(!titulo){ document.getElementById('err').textContent = 'El tema necesita un título.'; return; }
+    let encuesta = null;
+    if(document.getElementById('tiene-encuesta').checked){
+      const pregunta = document.getElementById('encuesta-pregunta').value.trim();
+      const opciones = Array.from(document.querySelectorAll('.opcion-encuesta')).map(i => i.value.trim()).filter(Boolean);
+      if(!pregunta || opciones.length < 2){ document.getElementById('err').textContent = 'La encuesta necesita una pregunta y al menos 2 opciones.'; return; }
+      encuesta = { pregunta, opciones, multiple: document.getElementById('encuesta-multiple').checked };
+    }
+    const nuevo = { id: uid(), titulo, descripcion, estado:'activo', creado: Date.now(), _count:0, creadoPor:'moderador', aprobado:true, fijado:false, encuesta };
+    await upsertTema(nuevo);
+    state.view = 'moderator'; render();
+  };
+}
+
+function renderModTemaDetail(){
+  const t = state.temaActual;
+  const editing = state.editingTema;
+  app.innerHTML = `
+    <a class="back" id="back">← todos los temas</a>
+    <p class="eyebrow" style="margin-top:18px;">Gestión de tema</p>
+    ${editing ? `
+      <div class="card">
+        <div class="field">
+          <label for="edit-titulo">Título / pregunta principal</label>
+          <input type="text" id="edit-titulo" value="${esc(t.titulo)}" />
+        </div>
+        <div class="field">
+          <label for="edit-desc">Descripción breve (guía para la IA)</label>
+          <textarea id="edit-desc" rows="4">${esc(t.descripcion || '')}</textarea>
+        </div>
+        <label class="toggle-row"><input type="checkbox" id="tiene-encuesta" ${t.encuesta ? 'checked' : ''} /> Agregar una encuesta a este tema</label>
+        <div id="encuesta-builder" style="display:${t.encuesta ? 'block' : 'none'}; margin-top:8px;">
+          <div class="field">
+            <label for="encuesta-pregunta">Pregunta de la encuesta</label>
+            <input type="text" id="encuesta-pregunta" value="${esc(t.encuesta ? t.encuesta.pregunta : '')}" placeholder="Ej: ¿Qué día nos juntamos?" />
+          </div>
+          <div class="field">
+            <label>Opciones</label>
+            <div id="encuesta-opciones"></div>
+            <button type="button" class="btn btn-ghost btn-sm" id="agregar-opcion" style="margin-top:8px;">+ Agregar opción</button>
+          </div>
+          <label class="toggle-row"><input type="checkbox" id="encuesta-multiple" ${t.encuesta && t.encuesta.multiple ? 'checked' : ''} /> Permitir elegir más de una opción</label>
+          ${t.encuesta ? '<p class="footer-note">Si cambiás las opciones ahora, los votos ya emitidos quedan sin efecto.</p>' : ''}
+        </div>
+        <button class="btn btn-primary" id="save-edit" style="margin-top:8px;">Guardar cambios</button>
+        <button class="btn btn-ghost" id="cancel-edit" style="margin-left:8px;">Cancelar</button>
+        <div class="err" id="edit-err"></div>
+      </div>
+    ` : `
+      <h1 style="font-size:26px;">${esc(t.titulo)}</h1>
+      ${t.descripcion ? `<p class="sub">${esc(t.descripcion)}</p>` : ''}
+      <div class="stat-row">
+        <div class="stat"><span class="n">${t._count || 0}</span><span class="l">participantes</span></div>
+        <div class="stat"><span class="n">${esc(t.estado)}</span><span class="l">estado</span></div>
+      </div>
+      <div class="tema-actions" style="margin-bottom:24px;">
+        ${t.estado === 'activo' ? '<button class="btn btn-ghost btn-sm" id="pausar">Pausar</button>' : ''}
+        ${t.estado === 'pausado' ? '<button class="btn btn-ghost btn-sm" id="activar">Reactivar</button>' : ''}
+        ${t.estado !== 'terminado' ? '<button class="btn btn-ghost btn-sm" id="terminar">Terminar</button>' : ''}
+        <button class="btn btn-ghost btn-sm" id="fijar">${t.fijado ? 'Quitar fijado' : 'Fijar arriba'}</button>
+        <button class="btn btn-ghost btn-sm" id="editar">Editar título / descripción</button>
+        <button class="btn btn-danger btn-sm" id="eliminar">Eliminar tema</button>
+      </div>
+      <button class="btn btn-primary" id="gen-synth" ${state.busy?'disabled':''}>${state.busy ? 'Generando síntesis…' : 'Generar / actualizar síntesis'}</button>
+      <button class="btn btn-ghost" id="download-synth" style="margin-left:8px;" ${state.synth ? '' : 'disabled'}>Descargar resumen (Word)</button>
+      <div class="err" id="mod-err">${esc(state.error)}</div>
+      <div class="ok" id="mod-ok"></div>
+      ${renderEncuestaResultadosBloque()}
+      <hr class="divider" />
+      <div id="synth-area">${renderSynthesis()}</div>
+    `}
+  `;
+  document.getElementById('back').onclick = () => { state.editingTema = false; state.view='moderator'; render(); };
+
+  if(editing){
+    const opcionesDiv = document.getElementById('encuesta-opciones');
+    const agregarOpcionInput = (valor) => {
+      const row = document.createElement('div');
+      row.style.cssText = 'margin-bottom:8px; display:flex; gap:8px; align-items:center;';
+      row.innerHTML = `<input type="text" class="opcion-encuesta" placeholder="Opción" value="${esc(valor || '')}" style="flex:1;" /><button type="button" class="btn btn-ghost btn-sm quitar-opcion" style="flex:none; padding:8px 12px;">−</button>`;
+      row.querySelector('.quitar-opcion').onclick = () => row.remove();
+      opcionesDiv.appendChild(row);
+    };
+    if(t.encuesta && t.encuesta.opciones.length){
+      t.encuesta.opciones.forEach(op => agregarOpcionInput(op));
+    } else {
+      agregarOpcionInput(); agregarOpcionInput();
+    }
+    document.getElementById('agregar-opcion').onclick = () => agregarOpcionInput();
+    document.getElementById('tiene-encuesta').addEventListener('change', (e) => {
+      document.getElementById('encuesta-builder').style.display = e.target.checked ? 'block' : 'none';
+    });
+    document.getElementById('cancel-edit').onclick = () => { state.editingTema = false; render(); };
+    document.getElementById('save-edit').onclick = async () => {
+      const titulo = document.getElementById('edit-titulo').value.trim();
+      const descripcion = document.getElementById('edit-desc').value.trim();
+      if(!titulo){ document.getElementById('edit-err').textContent = 'El tema necesita un título.'; return; }
+      let encuesta = null;
+      if(document.getElementById('tiene-encuesta').checked){
+        const pregunta = document.getElementById('encuesta-pregunta').value.trim();
+        const opciones = Array.from(document.querySelectorAll('.opcion-encuesta')).map(i => i.value.trim()).filter(Boolean);
+        if(!pregunta || opciones.length < 2){ document.getElementById('edit-err').textContent = 'La encuesta necesita una pregunta y al menos 2 opciones.'; return; }
+        encuesta = { pregunta, opciones, multiple: document.getElementById('encuesta-multiple').checked };
+      }
+      const actualizado = await patchTema(t.id, x => { x.titulo = titulo; x.descripcion = descripcion; x.encuesta = encuesta; });
+      if(actualizado) state.temaActual = actualizado;
+      state.editingTema = false; render();
+    };
+    return;
+  }
+
+  document.getElementById('gen-synth').onclick = async () => {
+    state.busy = true; render();
+    const s = await generarOSintesisCacheada(t.id, true);
+    state.synth = s;
+    state.busy = false; render();
+  };
+  const downloadBtn = document.getElementById('download-synth');
+  if(downloadBtn) downloadBtn.onclick = () => {
+    try{
+      const html = formatSynthAsWordHtml(t, state.synth);
+      const blob = new Blob(['\ufeff', html], { type: 'application/msword' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'sintesis_' + t.titulo.toLowerCase().replace(/[^a-z0-9]+/g,'_').slice(0,40) + '.doc';
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      document.getElementById('mod-ok').textContent = 'Descarga iniciada.';
+    }catch(e){ document.getElementById('mod-ok').textContent = ''; document.getElementById('mod-err').textContent = 'No se pudo descargar el archivo.'; }
+  };
+  const aplicarPatch = async (patchFn) => {
+    const actualizado = await patchTema(t.id, patchFn);
+    if(actualizado) state.temaActual = actualizado;
+    render();
+  };
+  const pausar = document.getElementById('pausar');
+  if(pausar) pausar.onclick = () => aplicarPatch(x => { x.estado='pausado'; });
+  const activar = document.getElementById('activar');
+  if(activar) activar.onclick = () => aplicarPatch(x => { x.estado='activo'; });
+  const terminar = document.getElementById('terminar');
+  if(terminar) terminar.onclick = () => aplicarPatch(x => { x.estado='terminado'; });
+  document.getElementById('fijar').onclick = () => aplicarPatch(x => { x.fijado = !x.fijado; });
+  document.getElementById('editar').onclick = () => { state.editingTema = true; render(); };
+  document.getElementById('eliminar').onclick = async () => {
+    if(!confirm('Esto elimina el tema "' + t.titulo + '" y todas sus conversaciones guardadas. ¿Continuar?')) return;
+    const convKeys = await storageList('conversacion:' + t.id + ':', true);
+    for(const k of convKeys) await storageDelete(k, true);
+    await storageDelete('sintesis:' + t.id, true);
+    await removeTemaGlobal(t.id);
+    state.view = 'moderator'; render();
+  };
+}
+
+function itemTexto(c){ return typeof c === 'string' ? c : (c.texto || ''); }
+function itemNombres(c){ return typeof c === 'string' ? [] : (c.participantes || []); }
+
+function renderEncuestaResultadosBloque(){
+  const t = state.temaActual;
+  if(!t.encuesta) return '';
+  const enc = t.encuesta;
+  const res = state.encuestaResultados || { counts: enc.opciones.map(()=>0), totalVotantes: 0 };
+  const opcionesHtml = enc.opciones.map((op, i) => {
+    const votos = res.counts[i] || 0;
+    const pct = res.totalVotantes ? Math.round(votos / res.totalVotantes * 100) : 0;
+    return `
+      <div class="encuesta-opcion" style="cursor:default;">
+        <span class="eo-bar" style="width:${pct}%"></span>
+        <span class="eo-texto">${esc(op)}</span>
+        <span class="eo-pct">${pct}% · ${votos}</span>
+      </div>`;
+  }).join('');
+  return `
+    <div class="card encuesta-card">
+      <p class="eyebrow" style="margin-bottom:6px;">Resultados de la encuesta</p>
+      <h4 style="font-family:'Fraunces',serif; margin:0 0 12px; font-size:17px; color:var(--ink);">${esc(enc.pregunta)}</h4>
+      ${opcionesHtml}
+      <p class="footer-note" style="margin-top:10px;">${res.totalVotantes} persona${res.totalVotantes===1?'':'s'} votaron.</p>
+    </div>`;
+}
+
+function renderSynthesis(){
+  if(!state.synth) return `<p class="empty">Todavía no se generó una síntesis para este tema.</p>`;
+  const s = state.synth;
+  const consensos = (s.consensos||[]).map(c => `<li>${esc(itemTexto(c))}${itemNombres(c).length ? ' <span class="names">— ' + itemNombres(c).map(esc).join(', ') + '</span>' : ''}</li>`).join('');
+  const matices = (s.matices||[]).map(c => `<li>${esc(itemTexto(c))}${itemNombres(c).length ? ' <span class="names">— ' + itemNombres(c).map(esc).join(', ') + '</span>' : ''}</li>`).join('');
+  const propuestas = (s.propuestas||[]).map(p => `
+    <div class="proposal">
+      <div class="t">${esc(p.titulo||'')}</div>
+      <div>${esc(p.descripcion||'')}</div>
+      <div class="names">${(p.participantes||[]).map(esc).join(' · ')}</div>
+    </div>`).join('');
+  const pasosHtml = (s.pasos||[]).length ? `
+    <div class="synth-block">
+      <h3>Plan de acción</h3>
+      ${(s.pasos||[]).map((p,i) => `<div class="step"><span class="step-n">${i+1}</span><p>${esc(p)}</p></div>`).join('')}
+    </div>` : '';
+  const comparacionHtml = (s.comparacion||[]).length >= 2 ? `
+    <div class="synth-block">
+      <h3>Posturas enfrentadas</h3>
+      <div class="cmp-wrap"><table class="cmp-table">
+        <tr><th></th>${s.comparacion.map(c => `<th>${esc(c.titulo||'')}</th>`).join('')}</tr>
+        <tr><td>Postura</td>${s.comparacion.map(c => `<td>${esc(c.descripcion||'')}</td>`).join('')}</tr>
+        <tr><td>Sostenida por</td>${s.comparacion.map(c => `<td class="names">${(c.participantes||[]).map(esc).join(', ')}</td>`).join('')}</tr>
+      </table></div>
+    </div>` : '';
+  return `
+    <div class="synth-block"><h3>Resumen</h3><p>${esc(s.resumen||'')}</p></div>
+    <div class="synth-block"><h3>Consensos</h3><ul>${consensos || '<li class="empty">Sin datos suficientes todavía.</li>'}</ul></div>
+    <div class="synth-block"><h3>Matices y desacuerdos</h3><ul>${matices || '<li class="empty">Sin datos suficientes todavía.</li>'}</ul></div>
+    ${comparacionHtml}
+    <div class="synth-block"><h3>Propuestas</h3>${propuestas || '<p class="empty">Sin datos suficientes todavía.</p>'}</div>
+    ${pasosHtml}
+  `;
+}
+
+function synthSystemPrompt(tema){
+  return `Sos un asistente que sintetiza deliberaciones colectivas de un grupo (puede ser una asamblea, cooperativa, consorcio, club, fundación, equipo de trabajo u organización de cualquier tipo), sobre el tema: "${tema.titulo}"${tema.descripcion ? ' (' + tema.descripcion + ')' : ''}. Vas a recibir las transcripciones de conversaciones individuales de distintos participantes. Este espacio funciona con transparencia, como una reunión presencial: las propuestas puntuales, distintas o minoritarias siempre deben indicar qué participante o participantes las expresaron, sin importar cuánta gente haya participado en total — esa atribución es la que le permite a otros profundizar sobre esa idea puntual después. Para los consensos amplios, usá criterio según la escala: si son pocos participantes, nombralos; si son muchos y el consenso es compartido por la mayoría, describilo como patrón (por ejemplo "compartido por la mayoría" o un número aproximado) en vez de listar todos los nombres uno por uno. Este espacio busca ser una alternativa al discurso de odio, la desinformación viral y el enganche berreta de las redes sociales: redactá la síntesis con un tono respetuoso, calmo y riguroso, priorizando la fidelidad a lo que cada participante dijo por sobre cualquier formulación sensacionalista. Si de las conversaciones surgió un plan de acción concreto o una secuencia de pasos a seguir (por ejemplo, para organizar un encuentro, ejecutar una propuesta, o avanzar en el tema), incluilo en "pasos" como una lista ordenada de acciones breves, una por elemento — sin inventar pasos que nadie mencionó. Si no surgió nada así, dejá esa lista vacía. Si existen posturas realmente opuestas o diferencias marcadas y generalizadas entre participantes (no simples matices o variantes de una misma idea, sino posiciones que se contraponen entre sí de forma clara), identificalas en "comparacion" como una lista de posturas, cada una con "titulo" (nombre breve de la postura), "descripcion" y "participantes" que la sostienen. Esto es para poder mostrarlas una al lado de la otra en un cuadro comparativo — usalo solo cuando la oposición sea genuina y clara, no la fuerces si en el fondo hay más coincidencia que diferencia. Respondé ÚNICAMENTE con un objeto JSON válido, sin texto adicional, sin markdown, con esta forma exacta:
+{"resumen":"...", "consensos":[{"texto":"...","participantes":["..."]}], "matices":[{"texto":"...","participantes":["..."]}], "propuestas":[{"titulo":"...","descripcion":"...","participantes":["..."]}], "pasos":["..."], "comparacion":[{"titulo":"...","descripcion":"...","participantes":["..."]}]}`;
+}
+
+async function generarOSintesisCacheada(temaId, forzarNueva){
+  const tema = state.temas.find(x => x.id === temaId) || state.temaActual;
+  const keys = await storageList('conversacion:' + temaId + ':', true);
+  if(keys.length === 0) return null;
+  let transcript = '';
+  for(const k of keys){
+    const r = await storageGet(k, true);
+    if(!r) continue;
+    const conv = JSON.parse(r.value);
+    transcript += `\n\n--- Participante: ${conv.name} ---\n`;
+    transcript += conv.messages.filter(m => !(m.content||'').startsWith('__PANORAMA__'))
+      .map(m => (m.role==='user' ? conv.name : 'Entrevistador') + ': ' + m.content).join('\n');
+  }
+  try{
+    const raw = await callClaude([{ role:'user', content: 'Transcripciones a analizar:' + transcript }], synthSystemPrompt(tema), null, calcularMaxTokensSintesis(transcript.length));
+    const cleaned = raw.replace(/```json|```/g, '').trim();
+    const parsed = JSON.parse(cleaned);
+    await storageSet('sintesis:' + temaId, JSON.stringify(parsed), true);
+    return parsed;
+  }catch(e){
+    return null;
+  }
+}
+
+async function boot(){
+  const codigo = decodeURIComponent((location.hash || '').replace(/^#/, '')).trim();
+  if(codigo){
+    const meta = await rawStorageGet('wsmeta:' + codigo, true);
+    if(meta){
+      state.workspaceId = codigo;
+      state.workspaceMeta = JSON.parse(meta.value);
+      state.view = 'role';
+    } else {
+      state.errorLanding = 'No encontramos un Panorama con ese código. Revisá el link o creá uno nuevo.';
+      state.view = 'landing';
+    }
+  } else {
+    state.view = 'landing';
+  }
+  render();
+}
+boot();
+</script>
+</body>
+</html>
