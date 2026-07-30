@@ -236,12 +236,14 @@ function calcularMaxTokensSintesis(textoLength){
 
 /* Almacenamiento: los datos "shared" (de grupo: temas, conversaciones, votos,
    síntesis) viajan a un Worker propio de Cloudflare con KV detrás, para que
-   sobrevivan a que este artifact se vuelva a publicar con un link nuevo. Los
-   datos "no shared" (perfil local, últimos grupos visitados) son propios de
-   este dispositivo y se guardan directo en localStorage: no necesitan
-   sincronizarse entre dispositivos ni sobrevivir a nada más que este navegador. */
+   sobrevivan a que este artifact se vuelva a publicar con un link nuevo.
+   Los datos "no shared" (perfil local, identidad para retomar conversación,
+   marca de creador, últimos grupos visitados) siguen usando window.storage
+   como antes: localStorage no funciona dentro del sandbox de artifacts de
+   claude.ai, así que no es una opción acá. Costo aceptado: esos datos
+   personales sí se reinician cada vez que se vuelve a publicar el artifact,
+   a diferencia de los datos de grupo. */
 const STORAGE_WORKER_URL = "https://panorama-storage.joaquinlocati.workers.dev";
-const LOCAL_PREFIX = 'panoramaia:';
 
 async function workerStorageCall(op, payload){
   try{
@@ -256,39 +258,21 @@ async function workerStorageCall(op, payload){
 }
 
 async function rawStorageGet(key, shared){
-  if(!shared){
-    try{ const v = localStorage.getItem(LOCAL_PREFIX + key); return v === null ? null : { value: v }; }
-    catch(e){ return null; }
-  }
+  if(!shared){ try{ return await window.storage.get(key, false); }catch(e){ return null; } }
   const r = await workerStorageCall('get', { key });
   return (r && r.value !== null && r.value !== undefined) ? { value: r.value } : null;
 }
 async function rawStorageSet(key, value, shared){
-  if(!shared){
-    try{ localStorage.setItem(LOCAL_PREFIX + key, value); }catch(e){}
-    return;
-  }
+  if(!shared){ try{ return await window.storage.set(key, value, false); }catch(e){ return null; } }
   await workerStorageCall('set', { key, value });
 }
 async function rawStorageList(prefix, shared){
-  if(!shared){
-    const out = [];
-    try{
-      for(let i=0;i<localStorage.length;i++){
-        const k = localStorage.key(i);
-        if(k && k.indexOf(LOCAL_PREFIX + prefix) === 0) out.push(k.slice(LOCAL_PREFIX.length));
-      }
-    }catch(e){}
-    return out;
-  }
+  if(!shared){ try{ const r = await window.storage.list(prefix, false); return r ? r.keys : []; }catch(e){ return []; } }
   const r = await workerStorageCall('list', { prefix });
   return (r && r.keys) ? r.keys : [];
 }
 async function rawStorageDelete(key, shared){
-  if(!shared){
-    try{ localStorage.removeItem(LOCAL_PREFIX + key); }catch(e){}
-    return;
-  }
+  if(!shared){ try{ await window.storage.delete(key, false); }catch(e){} return; }
   await workerStorageCall('delete', { key });
 }
 
