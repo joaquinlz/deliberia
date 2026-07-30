@@ -234,10 +234,63 @@ function calcularMaxTokensSintesis(textoLength){
   return 4000;
 }
 
-async function rawStorageGet(key, shared){ try{ return await window.storage.get(key, !!shared); }catch(e){ return null; } }
-async function rawStorageSet(key, value, shared){ try{ return await window.storage.set(key, value, !!shared); }catch(e){ return null; } }
-async function rawStorageList(prefix, shared){ try{ const r = await window.storage.list(prefix, !!shared); return r ? r.keys : []; }catch(e){ return []; } }
-async function rawStorageDelete(key, shared){ try{ await window.storage.delete(key, !!shared); }catch(e){} }
+/* Almacenamiento: los datos "shared" (de grupo: temas, conversaciones, votos,
+   síntesis) viajan a un Worker propio de Cloudflare con KV detrás, para que
+   sobrevivan a que este artifact se vuelva a publicar con un link nuevo. Los
+   datos "no shared" (perfil local, últimos grupos visitados) son propios de
+   este dispositivo y se guardan directo en localStorage: no necesitan
+   sincronizarse entre dispositivos ni sobrevivir a nada más que este navegador. */
+const STORAGE_WORKER_URL = "https://REEMPLAZAR-CON-TU-WORKER.workers.dev";
+const LOCAL_PREFIX = 'panoramaia:';
+
+async function workerStorageCall(op, payload){
+  try{
+    const res = await fetch(STORAGE_WORKER_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ op, ...payload })
+    });
+    if(!res.ok) return null;
+    return await res.json();
+  }catch(e){ return null; }
+}
+
+async function rawStorageGet(key, shared){
+  if(!shared){
+    try{ const v = localStorage.getItem(LOCAL_PREFIX + key); return v === null ? null : { value: v }; }
+    catch(e){ return null; }
+  }
+  const r = await workerStorageCall('get', { key });
+  return (r && r.value !== null && r.value !== undefined) ? { value: r.value } : null;
+}
+async function rawStorageSet(key, value, shared){
+  if(!shared){
+    try{ localStorage.setItem(LOCAL_PREFIX + key, value); }catch(e){}
+    return;
+  }
+  await workerStorageCall('set', { key, value });
+}
+async function rawStorageList(prefix, shared){
+  if(!shared){
+    const out = [];
+    try{
+      for(let i=0;i<localStorage.length;i++){
+        const k = localStorage.key(i);
+        if(k && k.indexOf(LOCAL_PREFIX + prefix) === 0) out.push(k.slice(LOCAL_PREFIX.length));
+      }
+    }catch(e){}
+    return out;
+  }
+  const r = await workerStorageCall('list', { prefix });
+  return (r && r.keys) ? r.keys : [];
+}
+async function rawStorageDelete(key, shared){
+  if(!shared){
+    try{ localStorage.removeItem(LOCAL_PREFIX + key); }catch(e){}
+    return;
+  }
+  await workerStorageCall('delete', { key });
+}
 
 /* Todas las claves de datos de un espacio quedan prefijadas automáticamente con su código,
    así el resto del código (temas, conversaciones, síntesis, perfiles) no necesita saber
