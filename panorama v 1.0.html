@@ -240,7 +240,7 @@ function calcularMaxTokensSintesis(textoLength){
    datos "no shared" (perfil local, últimos grupos visitados) son propios de
    este dispositivo y se guardan directo en localStorage: no necesitan
    sincronizarse entre dispositivos ni sobrevivir a nada más que este navegador. */
-const STORAGE_WORKER_URL = "https://REEMPLAZAR-CON-TU-WORKER.workers.dev";
+const STORAGE_WORKER_URL = "https://panorama-storage.joaquinlocati.workers.dev";
 const LOCAL_PREFIX = 'panoramaia:';
 
 async function workerStorageCall(op, payload){
