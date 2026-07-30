@@ -1184,7 +1184,7 @@ function renderParticipantNombre(){
         <label for="pn-codigo">Tu código personal</label>
         <input type="text" id="pn-codigo" placeholder="Ej: K7X9QRT" style="text-transform:uppercase;" />
       </div>
-      <p class="footer-note">Con tu código recuperás tus conversaciones de todos los temas de este grupo. Si no lo tenés a mano, seguí sin ponerlo: se te va a generar uno nuevo.</p>
+      <p class="footer-note">Usalo solo si ya participaste en este grupo antes y la app dejó de reconocerte (por ejemplo, después de una actualización). Con tu código recuperás tus conversaciones de todos los temas de este grupo de una sola vez. Si sos nuevo/a o no lo tenés a mano, dejá esto vacío: se te va a generar un código nuevo.</p>
     </div>
   `;
   document.getElementById('back').onclick = () => { state.view='role'; render(); };
@@ -1296,7 +1296,8 @@ function renderParticipantTopics(){
     ${state.mostrarCodigoNuevo ? `
     <div class="card" id="codigo-nuevo-banner" style="border-color: var(--gold);">
       <p style="margin-top:0;"><b>Guardá tu código personal:</b> <span style="font-family:'IBM Plex Mono', monospace; font-size:18px; letter-spacing:.05em;">${esc(state.mostrarCodigoNuevo)}</span></p>
-      <p class="footer-note" style="margin-bottom:12px;">Con este código vas a poder recuperar todas tus conversaciones de este grupo si en algún momento la app te vuelve a pedir el nombre. Anotalo en algún lado antes de seguir.</p>
+      <p class="footer-note" style="margin-bottom:4px;">¿Para qué sirve? Normalmente no vas a necesitarlo — la app te reconoce sola cada vez que volvés. Sirve solo como respaldo: si alguna vez, después de una actualización de la app, te vuelve a preguntar tu nombre como si fueras nuevo/a, vas a poder ingresar este código para recuperar todas tus conversaciones de este grupo tal como las dejaste.</p>
+      <p class="footer-note" style="margin-bottom:12px;">Guardalo en algún lado que no se pierda (notas del celular, un mensaje a vos mismo/a) antes de seguir.</p>
       <button class="btn btn-ghost btn-sm" id="codigo-nuevo-ok">Ya lo anoté</button>
     </div>` : ''}
     <div class="field">
