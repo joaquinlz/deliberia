@@ -1196,11 +1196,22 @@ function renderParticipantNombre(){
     const nombre = document.getElementById('pn-nombre').value.trim();
     const codigoIngresado = document.getElementById('pn-codigo').value.trim().toUpperCase();
     if(!nombre){ document.getElementById('pn-err').textContent = 'Contanos tu nombre para continuar.'; return; }
-    if(!(await nombreDisponibleEnGrupo(nombre))){
-      document.getElementById('pn-err').textContent = 'Ese nombre ya está en uso en este grupo. Elegí otro.';
-      return;
+    if(codigoIngresado){
+      /* Se está reclamando una identidad ya existente, no registrando un
+         nombre nuevo — no corresponde chequear disponibilidad de nombre
+         (bloquearía a la persona con su propio nombre real) ni volver a
+         registrarlo. Sí conviene validar que el código exista de verdad. */
+      if(!(await codigoExisteEnGrupo(codigoIngresado))){
+        document.getElementById('pn-err').textContent = 'Ese código no corresponde a ninguna conversación de este grupo. Revisalo, o dejá el campo vacío si sos nuevo/a.';
+        return;
+      }
+    } else {
+      if(!(await nombreDisponibleEnGrupo(nombre))){
+        document.getElementById('pn-err').textContent = 'Ese nombre ya está en uso en este grupo. Elegí otro.';
+        return;
+      }
+      await registrarNombreEnGrupo(nombre);
     }
-    await registrarNombreEnGrupo(nombre);
     state.savedName = nombre;
     state.savedCodigo = codigoIngresado || genCodigoPersonal();
     await storageSet('mi-perfil', JSON.stringify({ name: nombre, codigo: state.savedCodigo }), false);
@@ -1360,6 +1371,11 @@ async function nombreDisponibleEnGrupo(nombre){
   const lista = r ? JSON.parse(r.value) : [];
   const buscado = nombre.trim().toLowerCase();
   return !lista.some(n => n.trim().toLowerCase() === buscado);
+}
+
+async function codigoExisteEnGrupo(codigo){
+  const keys = await storageList('conversacion:', true);
+  return keys.some(k => k.endsWith(':' + codigo));
 }
 
 async function registrarNombreEnGrupo(nombre){
