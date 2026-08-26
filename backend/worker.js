@@ -7,11 +7,14 @@
 //                                  del servidor — nunca le manda el hash al navegador.
 // POST /grupos/:codigo/temas     → crea un tema nuevo dentro de un grupo.
 // GET  /grupos/:codigo/temas     → lista los temas aprobados de un grupo.
+// POST /grupos/:codigo/participantes → registra un participante nuevo (nombre único por grupo).
 // GET  /test-crear-grupo         → atajo para probar la creación de un grupo desde el navegador.
 // GET  /test-verificar-pin       → atajo para probar la verificación de PIN desde el navegador
 //                                  (ej: /test-verificar-pin?codigo=grupo-de-prueba&pin=1234).
 // GET  /test-crear-tema          → atajo para probar la creación de un tema desde el navegador
 //                                  (ej: /test-crear-tema?codigo=grupo-de-prueba).
+// GET  /test-crear-participante  → atajo para probar el registro de un participante
+//                                  (ej: /test-crear-participante?codigo=grupo-de-prueba&nombre=Juan).
 //                                  (Estos atajos "/test-*" son temporales, solo para esta etapa.)
 
 function slugify(s) {
@@ -97,6 +100,28 @@ async function crearTema(env, codigo, body) {
   return { id, grupo_codigo: codigo, titulo, descripcion, estado: 'activo', creado };
 }
 
+async function crearParticipante(env, codigo, body) {
+  const grupo = await env.DB.prepare("SELECT codigo FROM grupos WHERE codigo = ?").bind(codigo).first();
+  if (!grupo) return { error: 'No existe ese grupo.' };
+
+  const nombre = (body.nombre || '').trim();
+  if (!nombre) return { error: 'Falta el nombre.' };
+
+  const existente = await env.DB.prepare(
+    "SELECT id FROM participantes WHERE grupo_codigo = ? AND lower(nombre) = lower(?)"
+  ).bind(codigo, nombre).first();
+  if (existente) return { error: 'Ese nombre ya está en uso en este grupo.' };
+
+  const id = crypto.randomUUID();
+  const creado = Date.now();
+
+  await env.DB.prepare(
+    "INSERT INTO participantes (id, grupo_codigo, nombre, creado) VALUES (?, ?, ?, ?)"
+  ).bind(id, codigo, nombre, creado).run();
+
+  return { id, nombre, grupo_codigo: codigo, creado };
+}
+
 async function listarTemas(env, codigo) {
   const { results } = await env.DB.prepare(
     `SELECT id, titulo, descripcion, estado, fijado, creado, ultima_actividad, encuesta_pregunta, encuesta_opciones, encuesta_multiple
@@ -169,6 +194,14 @@ export default {
       return Response.json(resultado);
     }
 
+    if (url.pathname.startsWith('/grupos/') && url.pathname.endsWith('/participantes') && request.method === 'POST') {
+      const codigo = url.pathname.split('/')[2];
+      const body = await request.json();
+      const resultado = await crearParticipante(env, codigo, body);
+      if (resultado.error) return Response.json(resultado, { status: 400 });
+      return Response.json(resultado, { status: 201 });
+    }
+
     if (url.pathname.startsWith('/grupos/') && url.pathname.endsWith('/temas') && request.method === 'POST') {
       const codigo = url.pathname.split('/')[2];
       const body = await request.json();
@@ -208,6 +241,13 @@ export default {
       return Response.json(resultado);
     }
 
-    return new Response('DeliberIA backend — probá /test-db, /test-ai, /test-crear-grupo, /test-verificar-pin, /test-crear-tema, /grupos/<codigo>, o /grupos/<codigo>/temas');
+    if (url.pathname === '/test-crear-participante') {
+      const codigo = url.searchParams.get('codigo') || '';
+      const nombre = url.searchParams.get('nombre') || '';
+      const resultado = await crearParticipante(env, codigo, { nombre });
+      return Response.json(resultado);
+    }
+
+    return new Response('DeliberIA backend — probá /test-db, /test-ai, /test-crear-grupo, /test-verificar-pin, /test-crear-tema, /test-crear-participante, /grupos/<codigo>, o /grupos/<codigo>/temas');
   }
 };
