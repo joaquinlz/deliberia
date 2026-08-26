@@ -1,11 +1,14 @@
 // deliberia-backend — backend real de DeliberIA (Worker + D1 + Workers AI)
 //
-// /test-db, /test-ai        → pruebas de humo (dejarlas por ahora, no molestan).
-// POST /grupos               → crea un grupo nuevo.
-// GET  /grupos/:codigo       → devuelve los datos públicos de un grupo (nunca los PIN).
-// GET  /test-crear-grupo     → atajo para probar la creación de un grupo desde el navegador,
-//                              sin necesitar herramientas para mandar un POST a mano.
-//                              (Esto es temporal, solo para esta etapa de pruebas.)
+// /test-db, /test-ai            → pruebas de humo (dejarlas por ahora, no molestan).
+// POST /grupos                   → crea un grupo nuevo.
+// GET  /grupos/:codigo           → devuelve los datos públicos de un grupo (nunca los PIN).
+// POST /grupos/:codigo/verificar-pin → compara un PIN contra el hash guardado, del lado
+//                                  del servidor — nunca le manda el hash al navegador.
+// GET  /test-crear-grupo         → atajo para probar la creación de un grupo desde el navegador.
+// GET  /test-verificar-pin       → atajo para probar la verificación de PIN desde el navegador
+//                                  (ej: /test-verificar-pin?codigo=grupo-de-prueba&pin=1234).
+//                                  (Estos atajos "/test-*" son temporales, solo para esta etapa.)
 
 function slugify(s) {
   return (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
@@ -55,6 +58,15 @@ async function crearGrupo(env, body) {
   return { codigo, nombre, publico, creado };
 }
 
+async function verificarPin(env, codigo, pin) {
+  const grupo = await env.DB.prepare(
+    "SELECT pin_hash FROM grupos WHERE codigo = ?"
+  ).bind(codigo).first();
+  if (!grupo) return { error: 'No existe ese grupo.' };
+  const hash = await hashPin(pin || '');
+  return { correcto: hash === grupo.pin_hash };
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -98,6 +110,14 @@ export default {
       return Response.json(resultado, { status: 201 });
     }
 
+    if (url.pathname.startsWith('/grupos/') && url.pathname.endsWith('/verificar-pin') && request.method === 'POST') {
+      const codigo = url.pathname.split('/')[2];
+      const body = await request.json();
+      const resultado = await verificarPin(env, codigo, body.pin);
+      if (resultado.error) return Response.json(resultado, { status: 404 });
+      return Response.json(resultado);
+    }
+
     if (url.pathname.startsWith('/grupos/') && request.method === 'GET') {
       const codigo = url.pathname.split('/')[2];
       const grupo = await env.DB.prepare(
@@ -107,6 +127,13 @@ export default {
       return Response.json(grupo);
     }
 
-    return new Response('DeliberIA backend — probá /test-db, /test-ai, /test-crear-grupo, o /grupos/<codigo>');
+    if (url.pathname === '/test-verificar-pin') {
+      const codigo = url.searchParams.get('codigo') || '';
+      const pin = url.searchParams.get('pin') || '';
+      const resultado = await verificarPin(env, codigo, pin);
+      return Response.json(resultado);
+    }
+
+    return new Response('DeliberIA backend — probá /test-db, /test-ai, /test-crear-grupo, /test-verificar-pin, o /grupos/<codigo>');
   }
 };
