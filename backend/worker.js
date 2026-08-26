@@ -5,9 +5,13 @@
 // GET  /grupos/:codigo           → devuelve los datos públicos de un grupo (nunca los PIN).
 // POST /grupos/:codigo/verificar-pin → compara un PIN contra el hash guardado, del lado
 //                                  del servidor — nunca le manda el hash al navegador.
+// POST /grupos/:codigo/temas     → crea un tema nuevo dentro de un grupo.
+// GET  /grupos/:codigo/temas     → lista los temas aprobados de un grupo.
 // GET  /test-crear-grupo         → atajo para probar la creación de un grupo desde el navegador.
 // GET  /test-verificar-pin       → atajo para probar la verificación de PIN desde el navegador
 //                                  (ej: /test-verificar-pin?codigo=grupo-de-prueba&pin=1234).
+// GET  /test-crear-tema          → atajo para probar la creación de un tema desde el navegador
+//                                  (ej: /test-crear-tema?codigo=grupo-de-prueba).
 //                                  (Estos atajos "/test-*" son temporales, solo para esta etapa.)
 
 function slugify(s) {
@@ -67,6 +71,53 @@ async function verificarPin(env, codigo, pin) {
   return { correcto: hash === grupo.pin_hash };
 }
 
+async function crearTema(env, codigo, body) {
+  const grupo = await env.DB.prepare("SELECT codigo FROM grupos WHERE codigo = ?").bind(codigo).first();
+  if (!grupo) return { error: 'No existe ese grupo.' };
+
+  const titulo = (body.titulo || '').trim();
+  if (!titulo) return { error: 'Falta el título del tema.' };
+  const descripcion = (body.descripcion || '').trim();
+
+  let encuestaPregunta = null, encuestaOpciones = null, encuestaMultiple = 0;
+  if (body.encuesta && body.encuesta.pregunta && Array.isArray(body.encuesta.opciones) && body.encuesta.opciones.length >= 2) {
+    encuestaPregunta = body.encuesta.pregunta;
+    encuestaOpciones = JSON.stringify(body.encuesta.opciones);
+    encuestaMultiple = body.encuesta.multiple ? 1 : 0;
+  }
+
+  const id = crypto.randomUUID();
+  const creado = Date.now();
+
+  await env.DB.prepare(
+    `INSERT INTO temas (id, grupo_codigo, titulo, descripcion, estado, fijado, aprobado, encuesta_pregunta, encuesta_opciones, encuesta_multiple, creado, ultima_actividad)
+     VALUES (?, ?, ?, ?, 'activo', 0, 1, ?, ?, ?, ?, ?)`
+  ).bind(id, codigo, titulo, descripcion, encuestaPregunta, encuestaOpciones, encuestaMultiple, creado, creado).run();
+
+  return { id, grupo_codigo: codigo, titulo, descripcion, estado: 'activo', creado };
+}
+
+async function listarTemas(env, codigo) {
+  const { results } = await env.DB.prepare(
+    `SELECT id, titulo, descripcion, estado, fijado, creado, ultima_actividad, encuesta_pregunta, encuesta_opciones, encuesta_multiple
+     FROM temas WHERE grupo_codigo = ? AND aprobado = 1
+     ORDER BY fijado DESC, ultima_actividad DESC, creado DESC`
+  ).bind(codigo).all();
+
+  return results.map(t => ({
+    id: t.id,
+    titulo: t.titulo,
+    descripcion: t.descripcion,
+    estado: t.estado,
+    fijado: !!t.fijado,
+    creado: t.creado,
+    ultima_actividad: t.ultima_actividad,
+    encuesta: t.encuesta_pregunta
+      ? { pregunta: t.encuesta_pregunta, opciones: JSON.parse(t.encuesta_opciones || '[]'), multiple: !!t.encuesta_multiple }
+      : null
+  }));
+}
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -118,6 +169,20 @@ export default {
       return Response.json(resultado);
     }
 
+    if (url.pathname.startsWith('/grupos/') && url.pathname.endsWith('/temas') && request.method === 'POST') {
+      const codigo = url.pathname.split('/')[2];
+      const body = await request.json();
+      const resultado = await crearTema(env, codigo, body);
+      if (resultado.error) return Response.json(resultado, { status: 400 });
+      return Response.json(resultado, { status: 201 });
+    }
+
+    if (url.pathname.startsWith('/grupos/') && url.pathname.endsWith('/temas') && request.method === 'GET') {
+      const codigo = url.pathname.split('/')[2];
+      const temas = await listarTemas(env, codigo);
+      return Response.json(temas);
+    }
+
     if (url.pathname.startsWith('/grupos/') && request.method === 'GET') {
       const codigo = url.pathname.split('/')[2];
       const grupo = await env.DB.prepare(
@@ -134,6 +199,15 @@ export default {
       return Response.json(resultado);
     }
 
-    return new Response('DeliberIA backend — probá /test-db, /test-ai, /test-crear-grupo, /test-verificar-pin, o /grupos/<codigo>');
+    if (url.pathname === '/test-crear-tema') {
+      const codigo = url.searchParams.get('codigo') || '';
+      const resultado = await crearTema(env, codigo, {
+        titulo: 'Tema de prueba',
+        descripcion: 'Un tema creado para probar el circuito.'
+      });
+      return Response.json(resultado);
+    }
+
+    return new Response('DeliberIA backend — probá /test-db, /test-ai, /test-crear-grupo, /test-verificar-pin, /test-crear-tema, /grupos/<codigo>, o /grupos/<codigo>/temas');
   }
 };
