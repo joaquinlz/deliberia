@@ -8,6 +8,7 @@
 // POST /grupos/:codigo/temas     → crea un tema nuevo dentro de un grupo.
 // GET  /grupos/:codigo/temas     → lista los temas aprobados de un grupo.
 // POST /grupos/:codigo/participantes → registra un participante nuevo (nombre único por grupo).
+// GET  /grupos/:codigo/participantes → lista los participantes de un grupo (id + nombre).
 // POST /grupos/:codigo/temas/:temaId/mensajes → manda un mensaje al chat de un tema (guarda el
 //                                  mensaje y la respuesta de la IA, y devuelve la respuesta).
 // GET  /grupos/:codigo/temas/:temaId/mensajes?participanteId=... → lista la conversación guardada.
@@ -189,6 +190,13 @@ async function chatearConTema(env, codigo, temaId, body) {
   return { respuesta: texto };
 }
 
+async function listarParticipantes(env, codigo) {
+  const { results } = await env.DB.prepare(
+    "SELECT id, nombre, creado FROM participantes WHERE grupo_codigo = ? ORDER BY creado DESC"
+  ).bind(codigo).all();
+  return results;
+}
+
 async function listarMensajes(env, codigo, temaId, participanteId) {
   const { results } = await env.DB.prepare(
     "SELECT role, content, creado FROM mensajes WHERE tema_id = ? AND participante_id = ? ORDER BY creado ASC"
@@ -288,6 +296,12 @@ export default {
       const codigo = url.pathname.split('/')[2];
       const temas = await listarTemas(env, codigo);
       return Response.json(temas);
+    }
+
+    if (url.pathname.startsWith('/grupos/') && url.pathname.endsWith('/participantes') && request.method === 'GET') {
+      const codigo = url.pathname.split('/')[2];
+      const participantes = await listarParticipantes(env, codigo);
+      return Response.json(participantes);
     }
 
     {
