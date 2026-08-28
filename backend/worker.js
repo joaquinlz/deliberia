@@ -205,10 +205,20 @@ async function chatearConTema(env, codigo, temaId, body) {
     await env.DB.prepare(
       "INSERT INTO mensajes (tema_id, participante_id, role, content, creado) VALUES (?, ?, 'user', ?, ?)"
     ).bind(temaId, participante.id, mensaje, Date.now()).run();
+  } else if (previos.length === 0) {
+    // Primer mensaje de la charla: la IA necesita algo para arrancar. Este pie
+    // no se guarda como mensaje real, solo se usa para pedirle el saludo inicial.
+    mensajesIA.push({ role: 'user', content: 'Hola' });
   }
 
-  const respuestaIA = await env.AI.run('@cf/qwen/qwen3.8-27b', { messages: mensajesIA });
-  const texto = extraerTextoIA(respuestaIA);
+  let texto;
+  try {
+    const respuestaIA = await env.AI.run('@cf/qwen/qwen3.8-27b', { messages: mensajesIA });
+    texto = extraerTextoIA(respuestaIA);
+    if (!texto) throw new Error('respuesta vacía');
+  } catch (e) {
+    return { error: 'No se pudo generar la respuesta de la IA. Probá de nuevo.' };
+  }
 
   await env.DB.prepare(
     "INSERT INTO mensajes (tema_id, participante_id, role, content, creado) VALUES (?, ?, 'assistant', ?, ?)"
@@ -259,14 +269,19 @@ async function generarSintesis(env, codigo, temaId) {
     transcript += (m.role === 'user' ? m.participante : 'Entrevistador') + ': ' + m.content + '\n';
   }
 
-  const respuestaIA = await env.AI.run('@cf/qwen/qwen3.8-27b', {
-    messages: [
-      { role: 'system', content: promptSistemaSintesis(tema) },
-      { role: 'user', content: 'Transcripciones a analizar:' + transcript }
-    ]
-  });
-
-  const texto = extraerTextoIA(respuestaIA);
+  let texto;
+  try {
+    const respuestaIA = await env.AI.run('@cf/qwen/qwen3.8-27b', {
+      messages: [
+        { role: 'system', content: promptSistemaSintesis(tema) },
+        { role: 'user', content: 'Transcripciones a analizar:' + transcript }
+      ]
+    });
+    texto = extraerTextoIA(respuestaIA);
+    if (!texto) throw new Error('respuesta vacía');
+  } catch (e) {
+    return { error: 'No se pudo generar la síntesis. Probá de nuevo.' };
+  }
 
   let parsed;
   try {
@@ -323,14 +338,19 @@ async function generarPanoramaGrupo(env, codigo) {
     if (s.propuestas && s.propuestas.length) cuerpo += `Propuestas: ${s.propuestas.map(p => p.titulo + ': ' + (p.descripcion || '')).join(' | ')}\n`;
   }
 
-  const respuestaIA = await env.AI.run('@cf/qwen/qwen3.8-27b', {
-    messages: [
-      { role: 'system', content: promptSistemaPanoramaGrupo(grupo.nombre) },
-      { role: 'user', content: 'Síntesis de los temas del grupo:' + cuerpo }
-    ]
-  });
-
-  const texto = extraerTextoIA(respuestaIA);
+  let texto;
+  try {
+    const respuestaIA = await env.AI.run('@cf/qwen/qwen3.8-27b', {
+      messages: [
+        { role: 'system', content: promptSistemaPanoramaGrupo(grupo.nombre) },
+        { role: 'user', content: 'Síntesis de los temas del grupo:' + cuerpo }
+      ]
+    });
+    texto = extraerTextoIA(respuestaIA);
+    if (!texto) throw new Error('respuesta vacía');
+  } catch (e) {
+    return { error: 'No se pudo generar el panorama del grupo. Probá de nuevo.' };
+  }
 
   let parsed;
   try {
