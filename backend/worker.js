@@ -245,11 +245,42 @@ Respondé ÚNICAMENTE con un objeto JSON válido, sin texto adicional, sin markd
 {"resumen":"...", "consensos":[{"texto":"...","participantes":["..."]}], "matices":[{"texto":"...","participantes":["..."]}], "propuestas":[{"titulo":"...","descripcion":"...","participantes":["..."]}]}`;
 }
 
-async function generarSintesis(env, codigo, temaId) {
+// Lee un stream SSE de Workers AI (líneas "data: {...}") y devuelve el texto completo
+// acumulado. Se usa del lado del servidor para poder guardar el resultado final en D1
+// mientras el mismo stream (una copia, vía tee()) se le va mandando en vivo al navegador.
+async function acumularStreamIA(stream) {
+  const reader = stream.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let texto = '';
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lineas = buffer.split('\n');
+    buffer = lineas.pop();
+    for (const linea of lineas) {
+      if (!linea.startsWith('data: ')) continue;
+      const dataStr = linea.slice(6).trim();
+      if (!dataStr || dataStr === '[DONE]') continue;
+      try {
+        const evt = JSON.parse(dataStr);
+        if (evt.response) texto += evt.response;
+      } catch (e) {}
+    }
+  }
+  return texto;
+}
+
+function respuestaJson(data, status) {
+  return new Response(JSON.stringify(data), { status: status || 200, headers: { 'content-type': 'application/json' } });
+}
+
+async function generarSintesisStreaming(env, ctx, codigo, temaId) {
   const tema = await env.DB.prepare(
     "SELECT id, titulo, descripcion FROM temas WHERE id = ? AND grupo_codigo = ?"
   ).bind(temaId, codigo).first();
-  if (!tema) return { error: 'No existe ese tema.' };
+  if (!tema) return respuestaJson({ error: 'No existe ese tema.' }, 400);
 
   const { results: mensajes } = await env.DB.prepare(
     `SELECT m.role, m.content, p.nombre AS participante
@@ -257,7 +288,7 @@ async function generarSintesis(env, codigo, temaId) {
      WHERE m.tema_id = ? ORDER BY m.participante_id, m.creado ASC`
   ).bind(temaId).all();
 
-  if (mensajes.length === 0) return { error: 'Todavía no hay conversaciones en este tema.' };
+  if (mensajes.length === 0) return respuestaJson({ error: 'Todavía no hay conversaciones en este tema.' }, 400);
 
   let transcript = '';
   let participanteActual = null;
@@ -269,34 +300,37 @@ async function generarSintesis(env, codigo, temaId) {
     transcript += (m.role === 'user' ? m.participante : 'Entrevistador') + ': ' + m.content + '\n';
   }
 
-  let texto;
+  let stream;
   try {
-    const respuestaIA = await env.AI.run('@cf/qwen/qwen3.8-27b', {
+    stream = await env.AI.run('@cf/qwen/qwen3.8-27b', {
       messages: [
         { role: 'system', content: promptSistemaSintesis(tema) },
         { role: 'user', content: 'Transcripciones a analizar:' + transcript }
-      ]
+      ],
+      stream: true
     });
-    texto = extraerTextoIA(respuestaIA);
-    if (!texto) throw new Error('respuesta vacía');
   } catch (e) {
-    return { error: 'No se pudo generar la síntesis. Probá de nuevo.' };
+    return respuestaJson({ error: 'No se pudo generar la síntesis. Probá de nuevo.' }, 400);
   }
 
-  let parsed;
-  try {
-    const limpio = texto.replace(/```json|```/g, '').trim();
-    parsed = JSON.parse(limpio);
-  } catch (e) {
-    return { error: 'La IA no devolvió un JSON válido. Probá de nuevo.', crudo: texto };
-  }
+  const [paraElNavegador, paraGuardar] = stream.tee();
 
-  await env.DB.prepare(
-    `INSERT INTO sintesis (tema_id, contenido, lang, creado) VALUES (?, ?, 'es', ?)
-     ON CONFLICT(tema_id) DO UPDATE SET contenido = excluded.contenido, creado = excluded.creado`
-  ).bind(temaId, JSON.stringify(parsed), Date.now()).run();
+  ctx.waitUntil((async () => {
+    try {
+      const texto = await acumularStreamIA(paraGuardar);
+      const limpio = texto.replace(/```json|```/g, '').trim();
+      const parsed = JSON.parse(limpio);
+      await env.DB.prepare(
+        `INSERT INTO sintesis (tema_id, contenido, lang, creado) VALUES (?, ?, 'es', ?)
+         ON CONFLICT(tema_id) DO UPDATE SET contenido = excluded.contenido, creado = excluded.creado`
+      ).bind(temaId, JSON.stringify(parsed), Date.now()).run();
+    } catch (e) {
+      // Si esto falla, el navegador igual habrá visto el texto (o el error) por su lado;
+      // simplemente no queda guardado, y la próxima consulta no encontrará síntesis.
+    }
+  })());
 
-  return parsed;
+  return new Response(paraElNavegador, { headers: { 'content-type': 'text/event-stream' } });
 }
 
 async function obtenerSintesis(env, codigo, temaId) {
@@ -316,9 +350,9 @@ Respondé ÚNICAMENTE con un objeto JSON válido, sin texto adicional, sin markd
 {"ejes":["..."], "consensosTransversales":["..."], "temasDestacados":[{"titulo":"...","descripcion":"..."}]}`;
 }
 
-async function generarPanoramaGrupo(env, codigo) {
+async function generarPanoramaGrupoStreaming(env, ctx, codigo) {
   const grupo = await env.DB.prepare("SELECT codigo, nombre FROM grupos WHERE codigo = ?").bind(codigo).first();
-  if (!grupo) return { error: 'No existe ese grupo.' };
+  if (!grupo) return respuestaJson({ error: 'No existe ese grupo.' }, 400);
 
   const { results: temas } = await env.DB.prepare(
     `SELECT t.titulo, s.contenido FROM temas t
@@ -326,7 +360,7 @@ async function generarPanoramaGrupo(env, codigo) {
      WHERE t.grupo_codigo = ? AND t.aprobado = 1`
   ).bind(codigo).all();
 
-  if (temas.length === 0) return { error: 'Todavía no hay síntesis de temas suficientes para armar el panorama del grupo.' };
+  if (temas.length === 0) return respuestaJson({ error: 'Todavía no hay síntesis de temas suficientes para armar el panorama del grupo.' }, 400);
 
   let cuerpo = '';
   for (const t of temas) {
@@ -338,33 +372,33 @@ async function generarPanoramaGrupo(env, codigo) {
     if (s.propuestas && s.propuestas.length) cuerpo += `Propuestas: ${s.propuestas.map(p => p.titulo + ': ' + (p.descripcion || '')).join(' | ')}\n`;
   }
 
-  let texto;
+  let stream;
   try {
-    const respuestaIA = await env.AI.run('@cf/qwen/qwen3.8-27b', {
+    stream = await env.AI.run('@cf/qwen/qwen3.8-27b', {
       messages: [
         { role: 'system', content: promptSistemaPanoramaGrupo(grupo.nombre) },
         { role: 'user', content: 'Síntesis de los temas del grupo:' + cuerpo }
-      ]
+      ],
+      stream: true
     });
-    texto = extraerTextoIA(respuestaIA);
-    if (!texto) throw new Error('respuesta vacía');
   } catch (e) {
-    return { error: 'No se pudo generar el panorama del grupo. Probá de nuevo.' };
+    return respuestaJson({ error: 'No se pudo generar el panorama del grupo. Probá de nuevo.' }, 400);
   }
 
-  let parsed;
-  try {
-    parsed = JSON.parse(texto.replace(/```json|```/g, '').trim());
-  } catch (e) {
-    return { error: 'La IA no devolvió un JSON válido. Probá de nuevo.', crudo: texto };
-  }
+  const [paraElNavegador, paraGuardar] = stream.tee();
 
-  await env.DB.prepare(
-    `INSERT INTO panorama_grupo (grupo_codigo, contenido, creado) VALUES (?, ?, ?)
-     ON CONFLICT(grupo_codigo) DO UPDATE SET contenido = excluded.contenido, creado = excluded.creado`
-  ).bind(codigo, JSON.stringify(parsed), Date.now()).run();
+  ctx.waitUntil((async () => {
+    try {
+      const texto = await acumularStreamIA(paraGuardar);
+      const parsed = JSON.parse(texto.replace(/```json|```/g, '').trim());
+      await env.DB.prepare(
+        `INSERT INTO panorama_grupo (grupo_codigo, contenido, creado) VALUES (?, ?, ?)
+         ON CONFLICT(grupo_codigo) DO UPDATE SET contenido = excluded.contenido, creado = excluded.creado`
+      ).bind(codigo, JSON.stringify(parsed), Date.now()).run();
+    } catch (e) {}
+  })());
 
-  return parsed;
+  return new Response(paraElNavegador, { headers: { 'content-type': 'text/event-stream' } });
 }
 
 async function obtenerPanoramaGrupo(env, codigo) {
@@ -501,7 +535,7 @@ function corsHeaders() {
   };
 }
 
-async function handleRequest(request, env) {
+async function handleRequest(request, env, ctx) {
     const url = new URL(request.url);
 
     if (url.pathname === '/test-db') {
@@ -550,9 +584,7 @@ async function handleRequest(request, env) {
 
     if (url.pathname.startsWith('/grupos/') && url.pathname.endsWith('/panorama') && request.method === 'POST') {
       const codigo = url.pathname.split('/')[2];
-      const resultado = await generarPanoramaGrupo(env, codigo);
-      if (resultado.error) return Response.json(resultado, { status: 400 });
-      return Response.json(resultado);
+      return await generarPanoramaGrupoStreaming(env, ctx, codigo);
     }
 
     if (url.pathname.startsWith('/grupos/') && url.pathname.endsWith('/panorama') && request.method === 'GET') {
@@ -640,9 +672,7 @@ async function handleRequest(request, env) {
       }
       if (esRutaSintesis && request.method === 'POST') {
         const codigo = partes[1], temaId = partes[3];
-        const resultado = await generarSintesis(env, codigo, temaId);
-        if (resultado.error) return Response.json(resultado, { status: 400 });
-        return Response.json(resultado);
+        return await generarSintesisStreaming(env, ctx, codigo, temaId);
       }
       if (esRutaSintesis && request.method === 'GET') {
         const codigo = partes[1], temaId = partes[3];
@@ -702,8 +732,7 @@ async function handleRequest(request, env) {
     if (url.pathname === '/test-sintesis') {
       const codigo = url.searchParams.get('codigo') || '';
       const temaId = url.searchParams.get('temaId') || '';
-      const resultado = await generarSintesis(env, codigo, temaId);
-      return Response.json(resultado);
+      return await generarSintesisStreaming(env, ctx, codigo, temaId);
     }
 
     if (url.pathname === '/test-crear-tema-encuesta') {
@@ -727,19 +756,18 @@ async function handleRequest(request, env) {
 
     if (url.pathname === '/test-panorama-grupo') {
       const codigo = url.searchParams.get('codigo') || '';
-      const resultado = await generarPanoramaGrupo(env, codigo);
-      return Response.json(resultado);
+      return await generarPanoramaGrupoStreaming(env, ctx, codigo);
     }
 
     return new Response('DeliberIA backend — probá /test-db, /test-ai, /test-crear-grupo, /test-verificar-pin, /test-crear-tema, /test-crear-tema-encuesta, /test-crear-participante, /test-chat, /test-sintesis, /test-votar, /test-panorama-grupo, /grupos-publicos, /grupos/<codigo>, o /grupos/<codigo>/temas');
 }
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     if (request.method === 'OPTIONS') {
       return new Response(null, { headers: corsHeaders() });
     }
-    const response = await handleRequest(request, env);
+    const response = await handleRequest(request, env, ctx);
     const headers = new Headers(response.headers);
     for (const [k, v] of Object.entries(corsHeaders())) headers.set(k, v);
     return new Response(response.body, { status: response.status, headers });
