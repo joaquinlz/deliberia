@@ -460,8 +460,15 @@ async function listarTemas(env, codigo) {
   }));
 }
 
-export default {
-  async fetch(request, env) {
+function corsHeaders() {
+  return {
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type'
+  };
+}
+
+async function handleRequest(request, env) {
     const url = new URL(request.url);
 
     if (url.pathname === '/test-db') {
@@ -686,5 +693,16 @@ export default {
     }
 
     return new Response('DeliberIA backend — probá /test-db, /test-ai, /test-crear-grupo, /test-verificar-pin, /test-crear-tema, /test-crear-tema-encuesta, /test-crear-participante, /test-chat, /test-sintesis, /test-votar, /test-panorama-grupo, /grupos-publicos, /grupos/<codigo>, o /grupos/<codigo>/temas');
+}
+
+export default {
+  async fetch(request, env) {
+    if (request.method === 'OPTIONS') {
+      return new Response(null, { headers: corsHeaders() });
+    }
+    const response = await handleRequest(request, env);
+    const headers = new Headers(response.headers);
+    for (const [k, v] of Object.entries(corsHeaders())) headers.set(k, v);
+    return new Response(response.body, { status: response.status, headers });
   }
 };
