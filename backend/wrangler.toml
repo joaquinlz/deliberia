@@ -1,0 +1,12 @@
+name = "deliberia-backend"
+main = "worker.js"
+compatibility_date = "2026-08-01"
+account_id = "43be4ab5a84e775c83796cd5d1c8264b"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "deliberia-db"
+database_id = "532bbc8b-f872-44a9-ab38-61a310a21dfb"
+
+[ai]
+binding = "AI"
