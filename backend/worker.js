@@ -444,11 +444,17 @@ async function listarMensajes(env, codigo, temaId, participanteId) {
   return results;
 }
 
-async function listarTemas(env, codigo) {
+async function listarTemas(env, codigo, incluirNoAprobados) {
+  const filtroAprobado = incluirNoAprobados ? '' : 'AND t.aprobado = 1';
   const { results } = await env.DB.prepare(
-    `SELECT id, titulo, descripcion, estado, fijado, creado, ultima_actividad, encuesta_pregunta, encuesta_opciones, encuesta_multiple
-     FROM temas WHERE grupo_codigo = ? AND aprobado = 1
-     ORDER BY fijado DESC, ultima_actividad DESC, creado DESC`
+    `SELECT t.id, t.titulo, t.descripcion, t.estado, t.fijado, t.aprobado, t.creado, t.ultima_actividad,
+            t.encuesta_pregunta, t.encuesta_opciones, t.encuesta_multiple,
+            COUNT(DISTINCT m.participante_id) AS cantidadParticipantes
+     FROM temas t
+     LEFT JOIN mensajes m ON m.tema_id = t.id
+     WHERE t.grupo_codigo = ? ${filtroAprobado}
+     GROUP BY t.id
+     ORDER BY t.fijado DESC, t.ultima_actividad DESC, t.creado DESC`
   ).bind(codigo).all();
 
   return results.map(t => ({
@@ -457,8 +463,10 @@ async function listarTemas(env, codigo) {
     descripcion: t.descripcion,
     estado: t.estado,
     fijado: !!t.fijado,
+    aprobado: !!t.aprobado,
     creado: t.creado,
-    ultima_actividad: t.ultima_actividad,
+    _ultimaActividad: t.ultima_actividad,
+    _count: t.cantidadParticipantes,
     encuesta: t.encuesta_pregunta
       ? { pregunta: t.encuesta_pregunta, opciones: JSON.parse(t.encuesta_opciones || '[]'), multiple: !!t.encuesta_multiple }
       : null
