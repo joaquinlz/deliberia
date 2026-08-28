@@ -1143,25 +1143,8 @@ async function calcularMonitoreoApp(){
 }
 
 async function listarGruposPublicos(){
-  const keys = await rawStorageList('wsmeta:', true);
-  const grupos = [];
-  for(const k of keys){
-    const r = await rawStorageGet(k, true);
-    if(!r) continue;
-    let meta; try{ meta = JSON.parse(r.value); }catch(e){ continue; }
-    if(!meta.publico) continue;
-    const codigo = k.slice('wsmeta:'.length);
-    const temasR = await otroGrupoGet(codigo, 'config:temas', true);
-    const temas = temasR ? JSON.parse(temasR.value) : [];
-    let participaciones = 0, ultimaActividad = 0;
-    for(const t of temas){
-      const claves = await otroGrupoList(codigo, 'conversacion:' + t.id + ':', true);
-      participaciones += claves.length;
-      if(t.ultimaActividad && t.ultimaActividad > ultimaActividad) ultimaActividad = t.ultimaActividad;
-    }
-    grupos.push({ codigo, nombre: meta.nombre, creado: meta.creado, cantidadTemas: temas.length, participaciones, ultimaActividad });
-  }
-  return grupos;
+  const r = await apiGet('/grupos-publicos');
+  return Array.isArray(r) ? r : [];
 }
 
 async function loadTemas(){
@@ -1826,20 +1809,6 @@ async function obtenerGruposRecientes(){
   }catch(e){ return []; }
 }
 
-async function nombreDeGrupoDisponible(nombre){
-  const keys = await rawStorageList('wsmeta:', true);
-  const buscado = nombre.trim().toLowerCase();
-  for(const k of keys){
-    const r = await rawStorageGet(k, true);
-    if(!r) continue;
-    try{
-      const meta = JSON.parse(r.value);
-      if(meta.nombre && meta.nombre.trim().toLowerCase() === buscado) return false;
-    }catch(e){}
-  }
-  return true;
-}
-
 function slugify(s){
   return (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'')
     .replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,'').slice(0,30) || 'panorama';
@@ -1987,10 +1956,10 @@ function pintarDirectorio(){
   if(verMasDirBtn) verMasDirBtn.onclick = () => { state.mostrarDirectorioHasta = limiteDirectorio + 20; pintarDirectorio(); };
   document.querySelectorAll('.dir-unirse').forEach(b => b.onclick = async () => {
     const codigo = b.dataset.codigo;
-    const meta = await rawStorageGet('wsmeta:' + codigo, true);
-    if(!meta) return;
+    const meta = await apiGet('/grupos/' + encodeURIComponent(codigo));
+    if(!meta || meta.error) return;
     state.workspaceId = codigo;
-    state.workspaceMeta = JSON.parse(meta.value);
+    state.workspaceMeta = meta;
     await agregarGrupoReciente(codigo, state.workspaceMeta.nombre);
     state.view = 'role'; render();
   });
@@ -1999,55 +1968,6 @@ function pintarDirectorio(){
     state.origenPanoramaGrupo = 'directorio-grupos';
     state.view = 'panorama-grupo-publico'; render();
   });
-}
-
-function synthGrupoSystemPrompt(nombreGrupo, presupuestoCaracteres, notaReintento){
-  return `Sos un asistente que arma un panorama general de un grupo llamado "${nombreGrupo}" dentro de una herramienta de deliberación colectiva. Vas a recibir las síntesis ya generadas de los distintos temas que se hablaron en este grupo. Tu tarea es identificar, mirando el conjunto: de qué se trata este grupo en general, qué ejes temáticos predominan, y qué consensos o tensiones se repiten entre varios temas (no dentro de uno solo). Priorizá la calidad y el fundamento de los planteos por sobre la cantidad de veces que aparecen repetidos entre temas — un eje sostenido por pocos temas pero con argumentos sólidos merece mención igual que uno numeroso. Mantené un tono respetuoso y riguroso, fiel a lo que cada tema realmente reflejó, sin inventar nada que no esté en las síntesis recibidas.
-
-IMPORTANTE — antes de escribir, planificá la extensión: tu respuesta completa (el JSON entero) no debe superar aproximadamente ${presupuestoCaracteres} caracteres en total. Leé primero todas las síntesis recibidas enteras, y recién ahí armá el panorama teniendo en cuenta ese límite desde el principio. Si hay muchos temas y ejes para cubrir, priorizá calidad sobre exhaustividad: agrupá ejes parecidos y elegí los más sustanciales en vez de listarlos todos con el mismo detalle. Es preferible un panorama más compacto pero bien cerrado, a uno más largo que se corte a mitad de camino.
-
-Escribí toda tu respuesta (todos los campos del JSON) en ${state.lang === 'en' ? 'inglés' : 'español'}, que es el idioma que tiene configurada la interfaz de quien pidió este panorama — sin importar en qué idioma estén las síntesis originales.
-${notaReintento ? '\n' + notaReintento + '\n' : ''}
-Respondé ÚNICAMENTE con un objeto JSON válido, sin texto adicional, sin markdown, con esta forma exacta:
-{"resumen":"...", "ejes_tematicos":["..."], "consensos_transversales":["..."], "temas_destacados":[{"titulo":"...","porque":"..."}]}`;
-}
-
-async function generarPanoramaGrupo(codigo, nombreGrupo, barraId){
-  const temasR = await otroGrupoGet(codigo, 'config:temas', true);
-  const temas = temasR ? JSON.parse(temasR.value) : [];
-  let transcript = '';
-  for(const t of temas){
-    const s = await otroGrupoGet(codigo, 'sintesis:' + t.id, true);
-    if(s){
-      let parsed; try{ parsed = JSON.parse(s.value); }catch(e){ parsed = null; }
-      if(parsed) transcript += `\n\n--- Tema: ${t.titulo} ---\nResumen: ${parsed.resumen||''}\nConsensos: ${(parsed.consensos||[]).map(itemTexto).join(' / ')}`;
-    }
-  }
-  if(!transcript) return null;
-  const maxTokens = calcularMaxTokensSintesis(transcript.length);
-  let presupuesto = Math.round(maxTokens * 4 * 0.7);
-  let notaReintento = null;
-  for(let intento = 1; intento <= 2; intento++){
-    try{
-      const raw = await callClaudeStreaming([{ role:'user', content: 'Síntesis de los temas del grupo:' + transcript }], synthGrupoSystemPrompt(nombreGrupo, presupuesto, notaReintento), maxTokens,
-        barraId ? (chars) => actualizarBarraProgreso(barraId, (chars / (maxTokens * 4)) * 100) : null);
-      const cleaned = raw.replace(/```json|```/g, '').trim();
-      const parsed = JSON.parse(cleaned);
-      if(barraId) ocultarBarraProgreso(barraId);
-      parsed._lang = state.lang;
-      await otroGrupoSet(codigo, 'panorama-grupo', JSON.stringify(parsed), true);
-      return parsed;
-    }catch(e){
-      if(((e && e.message) || '').startsWith('api_error_')){
-        if(barraId) ocultarBarraProgreso(barraId);
-        return mensajeErrorIA(e);
-      }
-      presupuesto = Math.round(presupuesto * 0.65);
-      notaReintento = 'AVISO: tu intento anterior para este mismo panorama fue demasiado largo y no llegó a cerrar el JSON correctamente. Esta vez sé notablemente más breve y compacto.';
-    }
-  }
-  if(barraId) ocultarBarraProgreso(barraId);
-  return tr('errorGeneracion');
 }
 
 function formatPanoramaGrupoWordHtml(nombreGrupo, p){
