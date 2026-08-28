@@ -15,6 +15,10 @@
 // POST /grupos/:codigo/temas/:temaId/sintesis → genera (o regenera) la síntesis del tema a partir
 //                                  de todas las conversaciones guardadas, y la guarda.
 // GET  /grupos/:codigo/temas/:temaId/sintesis → devuelve la síntesis ya guardada (o null si no hay).
+// POST /grupos/:codigo/temas/:temaId/votos → vota (o cambia el voto) de un participante en la
+//                                  encuesta de un tema.
+// GET  /grupos/:codigo/temas/:temaId/votos?participanteId=... → devuelve el voto actual de esa persona.
+// GET  /grupos/:codigo/temas/:temaId/votos/resultados → cuenta total de votos por opción.
 // GET  /test-crear-grupo         → atajo para probar la creación de un grupo desde el navegador.
 // GET  /test-verificar-pin       → atajo para probar la verificación de PIN desde el navegador
 //                                  (ej: /test-verificar-pin?codigo=grupo-de-prueba&pin=1234).
@@ -26,6 +30,10 @@
 //                                  (ej: /test-chat?codigo=...&temaId=...&participanteId=...&mensaje=...).
 // GET  /test-sintesis            → atajo para probar la generación de síntesis desde el navegador
 //                                  (ej: /test-sintesis?codigo=grupo-de-prueba&temaId=...).
+// GET  /test-crear-tema-encuesta → atajo para crear un tema con encuesta de prueba
+//                                  (ej: /test-crear-tema-encuesta?codigo=grupo-de-prueba).
+// GET  /test-votar               → atajo para probar el voto desde el navegador
+//                                  (ej: /test-votar?codigo=...&temaId=...&participanteId=...&opciones=0,1).
 //                                  (Estos atajos "/test-*" son temporales, solo para esta etapa.)
 
 function slugify(s) {
@@ -279,6 +287,65 @@ async function listarParticipantes(env, codigo) {
   return results;
 }
 
+async function votar(env, codigo, temaId, body) {
+  const tema = await env.DB.prepare(
+    "SELECT id, encuesta_pregunta, encuesta_opciones, encuesta_multiple FROM temas WHERE id = ? AND grupo_codigo = ?"
+  ).bind(temaId, codigo).first();
+  if (!tema) return { error: 'No existe ese tema.' };
+  if (!tema.encuesta_pregunta) return { error: 'Este tema no tiene encuesta.' };
+
+  const participante = await env.DB.prepare(
+    "SELECT id FROM participantes WHERE id = ? AND grupo_codigo = ?"
+  ).bind(body.participanteId, codigo).first();
+  if (!participante) return { error: 'No existe ese participante.' };
+
+  const totalOpciones = JSON.parse(tema.encuesta_opciones || '[]').length;
+  let opciones = Array.isArray(body.opciones)
+    ? body.opciones.filter(i => Number.isInteger(i) && i >= 0 && i < totalOpciones)
+    : [];
+  opciones = [...new Set(opciones)];
+  if (!tema.encuesta_multiple) opciones = opciones.slice(0, 1);
+  if (opciones.length === 0) return { error: 'Elegí al menos una opción válida.' };
+
+  await env.DB.prepare(
+    `INSERT INTO votos (tema_id, participante_id, opciones) VALUES (?, ?, ?)
+     ON CONFLICT(tema_id, participante_id) DO UPDATE SET opciones = excluded.opciones`
+  ).bind(temaId, participante.id, JSON.stringify(opciones)).run();
+
+  return { ok: true, opciones };
+}
+
+async function resultadosVotos(env, codigo, temaId) {
+  const tema = await env.DB.prepare(
+    "SELECT id, encuesta_opciones FROM temas WHERE id = ? AND grupo_codigo = ?"
+  ).bind(temaId, codigo).first();
+  if (!tema) return { error: 'No existe ese tema.' };
+  if (!tema.encuesta_opciones) return { error: 'Este tema no tiene encuesta.' };
+
+  const totalOpciones = JSON.parse(tema.encuesta_opciones).length;
+  const counts = new Array(totalOpciones).fill(0);
+
+  const { results } = await env.DB.prepare(
+    "SELECT opciones FROM votos WHERE tema_id = ?"
+  ).bind(temaId).all();
+
+  for (const r of results) {
+    let elegidas = [];
+    try { elegidas = JSON.parse(r.opciones); } catch (e) {}
+    for (const i of elegidas) if (i >= 0 && i < totalOpciones) counts[i]++;
+  }
+
+  return { counts, totalVotantes: results.length };
+}
+
+async function miVoto(env, codigo, temaId, participanteId) {
+  const row = await env.DB.prepare(
+    "SELECT opciones FROM votos WHERE tema_id = ? AND participante_id = ?"
+  ).bind(temaId, participanteId).first();
+  if (!row) return { opciones: [] };
+  try { return { opciones: JSON.parse(row.opciones) }; } catch (e) { return { opciones: [] }; }
+}
+
 async function listarMensajes(env, codigo, temaId, participanteId) {
   const { results } = await env.DB.prepare(
     "SELECT role, content, creado FROM mensajes WHERE tema_id = ? AND participante_id = ? ORDER BY creado ASC"
@@ -391,7 +458,28 @@ export default {
       const esGrupoTema5 = partes.length === 5 && partes[0] === 'grupos' && partes[2] === 'temas';
       const esRutaMensajes = esGrupoTema5 && partes[4] === 'mensajes';
       const esRutaSintesis = esGrupoTema5 && partes[4] === 'sintesis';
+      const esRutaVotos = esGrupoTema5 && partes[4] === 'votos';
+      const esRutaResultadosVotos = partes.length === 6 && partes[0] === 'grupos' && partes[2] === 'temas' && partes[4] === 'votos' && partes[5] === 'resultados';
 
+      if (esRutaResultadosVotos && request.method === 'GET') {
+        const codigo = partes[1], temaId = partes[3];
+        const resultado = await resultadosVotos(env, codigo, temaId);
+        if (resultado.error) return Response.json(resultado, { status: 400 });
+        return Response.json(resultado);
+      }
+      if (esRutaVotos && request.method === 'POST') {
+        const codigo = partes[1], temaId = partes[3];
+        const body = await request.json();
+        const resultado = await votar(env, codigo, temaId, body);
+        if (resultado.error) return Response.json(resultado, { status: 400 });
+        return Response.json(resultado);
+      }
+      if (esRutaVotos && request.method === 'GET') {
+        const codigo = partes[1], temaId = partes[3];
+        const participanteId = url.searchParams.get('participanteId') || '';
+        const resultado = await miVoto(env, codigo, temaId, participanteId);
+        return Response.json(resultado);
+      }
       if (esRutaMensajes && request.method === 'POST') {
         const codigo = partes[1], temaId = partes[3];
         const body = await request.json();
@@ -467,6 +555,25 @@ export default {
       return Response.json(resultado);
     }
 
-    return new Response('DeliberIA backend — probá /test-db, /test-ai, /test-crear-grupo, /test-verificar-pin, /test-crear-tema, /test-crear-participante, /test-chat, /test-sintesis, /grupos/<codigo>, o /grupos/<codigo>/temas');
+    if (url.pathname === '/test-crear-tema-encuesta') {
+      const codigo = url.searchParams.get('codigo') || '';
+      const resultado = await crearTema(env, codigo, {
+        titulo: 'Tema de prueba con encuesta',
+        descripcion: 'Un tema con encuesta para probar el voto.',
+        encuesta: { pregunta: '¿Qué opción preferís?', opciones: ['Opción A', 'Opción B', 'Opción C'], multiple: false }
+      });
+      return Response.json(resultado);
+    }
+
+    if (url.pathname === '/test-votar') {
+      const codigo = url.searchParams.get('codigo') || '';
+      const temaId = url.searchParams.get('temaId') || '';
+      const participanteId = url.searchParams.get('participanteId') || '';
+      const opciones = (url.searchParams.get('opciones') || '').split(',').filter(x => x !== '').map(Number);
+      const resultado = await votar(env, codigo, temaId, { participanteId, opciones });
+      return Response.json(resultado);
+    }
+
+    return new Response('DeliberIA backend — probá /test-db, /test-ai, /test-crear-grupo, /test-verificar-pin, /test-crear-tema, /test-crear-tema-encuesta, /test-crear-participante, /test-chat, /test-sintesis, /test-votar, /grupos/<codigo>, o /grupos/<codigo>/temas');
   }
 };
