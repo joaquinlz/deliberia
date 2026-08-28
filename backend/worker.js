@@ -19,6 +19,11 @@
 //                                  encuesta de un tema.
 // GET  /grupos/:codigo/temas/:temaId/votos?participanteId=... → devuelve el voto actual de esa persona.
 // GET  /grupos/:codigo/temas/:temaId/votos/resultados → cuenta total de votos por opción.
+// POST /grupos/:codigo/panorama → genera (o regenera) el panorama del grupo, cruzando las
+//                                  síntesis de todos sus temas ya generadas.
+// GET  /grupos/:codigo/panorama → devuelve el panorama del grupo ya guardado (o null si no hay).
+// GET  /grupos-publicos → lista los grupos públicos, con cantidad de temas, participaciones y
+//                                  última actividad (para el directorio).
 // GET  /test-crear-grupo         → atajo para probar la creación de un grupo desde el navegador.
 // GET  /test-verificar-pin       → atajo para probar la verificación de PIN desde el navegador
 //                                  (ej: /test-verificar-pin?codigo=grupo-de-prueba&pin=1234).
@@ -34,11 +39,21 @@
 //                                  (ej: /test-crear-tema-encuesta?codigo=grupo-de-prueba).
 // GET  /test-votar               → atajo para probar el voto desde el navegador
 //                                  (ej: /test-votar?codigo=...&temaId=...&participanteId=...&opciones=0,1).
+// GET  /test-panorama-grupo      → atajo para probar el panorama de grupo desde el navegador
+//                                  (ej: /test-panorama-grupo?codigo=grupo-de-prueba).
 //                                  (Estos atajos "/test-*" son temporales, solo para esta etapa.)
 
 function slugify(s) {
   return (s || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 30) || 'grupo';
+}
+
+function extraerTextoIA(respuestaIA) {
+  return (
+    (respuestaIA.choices && respuestaIA.choices[0] && respuestaIA.choices[0].message && respuestaIA.choices[0].message.content) ||
+    respuestaIA.response ||
+    ''
+  ).trim();
 }
 
 async function hashPin(pin) {
@@ -188,11 +203,7 @@ async function chatearConTema(env, codigo, temaId, body) {
   }
 
   const respuestaIA = await env.AI.run('@cf/qwen/qwen3.8-27b', { messages: mensajesIA });
-  const texto = (
-    (respuestaIA.choices && respuestaIA.choices[0] && respuestaIA.choices[0].message && respuestaIA.choices[0].message.content) ||
-    respuestaIA.response ||
-    ''
-  ).trim();
+  const texto = extraerTextoIA(respuestaIA);
 
   await env.DB.prepare(
     "INSERT INTO mensajes (tema_id, participante_id, role, content, creado) VALUES (?, ?, 'assistant', ?, ?)"
@@ -250,11 +261,7 @@ async function generarSintesis(env, codigo, temaId) {
     ]
   });
 
-  const texto = (
-    (respuestaIA.choices && respuestaIA.choices[0] && respuestaIA.choices[0].message && respuestaIA.choices[0].message.content) ||
-    respuestaIA.response ||
-    ''
-  ).trim();
+  const texto = extraerTextoIA(respuestaIA);
 
   let parsed;
   try {
@@ -278,6 +285,85 @@ async function obtenerSintesis(env, codigo, temaId) {
   const row = await env.DB.prepare("SELECT contenido, creado FROM sintesis WHERE tema_id = ?").bind(temaId).first();
   if (!row) return null;
   return { ...JSON.parse(row.contenido), creado: row.creado };
+}
+
+function promptSistemaPanoramaGrupo(nombreGrupo) {
+  return `Sos un asistente que arma un panorama general de un grupo de deliberación colectiva llamado "${nombreGrupo}", cruzando las síntesis de varios temas que ya fueron elaboradas por separado. Vas a recibir esas síntesis, una por tema.
+
+Identificá: ejes temáticos que se repiten o se relacionan entre varios temas, consensos transversales (ideas que aparecen de forma coincidente en más de un tema, no dentro de uno solo), y una breve descripción de los temas más destacados del grupo. Si algo no se puede identificar con lo que tenés, dejá esa lista vacía en vez de inventar.
+
+Respondé ÚNICAMENTE con un objeto JSON válido, sin texto adicional, sin markdown, con esta forma exacta:
+{"ejes":["..."], "consensosTransversales":["..."], "temasDestacados":[{"titulo":"...","descripcion":"..."}]}`;
+}
+
+async function generarPanoramaGrupo(env, codigo) {
+  const grupo = await env.DB.prepare("SELECT codigo, nombre FROM grupos WHERE codigo = ?").bind(codigo).first();
+  if (!grupo) return { error: 'No existe ese grupo.' };
+
+  const { results: temas } = await env.DB.prepare(
+    `SELECT t.titulo, s.contenido FROM temas t
+     JOIN sintesis s ON s.tema_id = t.id
+     WHERE t.grupo_codigo = ? AND t.aprobado = 1`
+  ).bind(codigo).all();
+
+  if (temas.length === 0) return { error: 'Todavía no hay síntesis de temas suficientes para armar el panorama del grupo.' };
+
+  let cuerpo = '';
+  for (const t of temas) {
+    let s;
+    try { s = JSON.parse(t.contenido); } catch (e) { continue; }
+    cuerpo += `\n\n--- Tema: ${t.titulo} ---\n`;
+    cuerpo += `Resumen: ${s.resumen || ''}\n`;
+    if (s.consensos && s.consensos.length) cuerpo += `Consensos: ${s.consensos.map(c => c.texto).join(' | ')}\n`;
+    if (s.propuestas && s.propuestas.length) cuerpo += `Propuestas: ${s.propuestas.map(p => p.titulo + ': ' + (p.descripcion || '')).join(' | ')}\n`;
+  }
+
+  const respuestaIA = await env.AI.run('@cf/qwen/qwen3.8-27b', {
+    messages: [
+      { role: 'system', content: promptSistemaPanoramaGrupo(grupo.nombre) },
+      { role: 'user', content: 'Síntesis de los temas del grupo:' + cuerpo }
+    ]
+  });
+
+  const texto = extraerTextoIA(respuestaIA);
+
+  let parsed;
+  try {
+    parsed = JSON.parse(texto.replace(/```json|```/g, '').trim());
+  } catch (e) {
+    return { error: 'La IA no devolvió un JSON válido. Probá de nuevo.', crudo: texto };
+  }
+
+  await env.DB.prepare(
+    `INSERT INTO panorama_grupo (grupo_codigo, contenido, creado) VALUES (?, ?, ?)
+     ON CONFLICT(grupo_codigo) DO UPDATE SET contenido = excluded.contenido, creado = excluded.creado`
+  ).bind(codigo, JSON.stringify(parsed), Date.now()).run();
+
+  return parsed;
+}
+
+async function obtenerPanoramaGrupo(env, codigo) {
+  const grupo = await env.DB.prepare("SELECT codigo FROM grupos WHERE codigo = ?").bind(codigo).first();
+  if (!grupo) return { error: 'No existe ese grupo.' };
+  const row = await env.DB.prepare("SELECT contenido, creado FROM panorama_grupo WHERE grupo_codigo = ?").bind(codigo).first();
+  if (!row) return null;
+  return { ...JSON.parse(row.contenido), creado: row.creado };
+}
+
+async function listarGruposPublicos(env) {
+  const { results } = await env.DB.prepare(
+    `SELECT g.codigo, g.nombre, g.creado,
+            COUNT(DISTINCT t.id) AS cantidadTemas,
+            MAX(t.ultima_actividad) AS ultimaActividad,
+            COUNT(DISTINCT p.id) AS participaciones
+     FROM grupos g
+     LEFT JOIN temas t ON t.grupo_codigo = g.codigo AND t.aprobado = 1
+     LEFT JOIN participantes p ON p.grupo_codigo = g.codigo
+     WHERE g.publico = 1
+     GROUP BY g.codigo, g.nombre, g.creado
+     ORDER BY g.creado DESC`
+  ).all();
+  return results;
 }
 
 async function listarParticipantes(env, codigo) {
@@ -415,6 +501,25 @@ export default {
       const resultado = await crearGrupo(env, body);
       if (resultado.error) return Response.json(resultado, { status: 400 });
       return Response.json(resultado, { status: 201 });
+    }
+
+    if (url.pathname === '/grupos-publicos' && request.method === 'GET') {
+      const grupos = await listarGruposPublicos(env);
+      return Response.json(grupos);
+    }
+
+    if (url.pathname.startsWith('/grupos/') && url.pathname.endsWith('/panorama') && request.method === 'POST') {
+      const codigo = url.pathname.split('/')[2];
+      const resultado = await generarPanoramaGrupo(env, codigo);
+      if (resultado.error) return Response.json(resultado, { status: 400 });
+      return Response.json(resultado);
+    }
+
+    if (url.pathname.startsWith('/grupos/') && url.pathname.endsWith('/panorama') && request.method === 'GET') {
+      const codigo = url.pathname.split('/')[2];
+      const resultado = await obtenerPanoramaGrupo(env, codigo);
+      if (resultado && resultado.error) return Response.json(resultado, { status: 400 });
+      return Response.json(resultado);
     }
 
     if (url.pathname.startsWith('/grupos/') && url.pathname.endsWith('/verificar-pin') && request.method === 'POST') {
@@ -574,6 +679,12 @@ export default {
       return Response.json(resultado);
     }
 
-    return new Response('DeliberIA backend — probá /test-db, /test-ai, /test-crear-grupo, /test-verificar-pin, /test-crear-tema, /test-crear-tema-encuesta, /test-crear-participante, /test-chat, /test-sintesis, /test-votar, /grupos/<codigo>, o /grupos/<codigo>/temas');
+    if (url.pathname === '/test-panorama-grupo') {
+      const codigo = url.searchParams.get('codigo') || '';
+      const resultado = await generarPanoramaGrupo(env, codigo);
+      return Response.json(resultado);
+    }
+
+    return new Response('DeliberIA backend — probá /test-db, /test-ai, /test-crear-grupo, /test-verificar-pin, /test-crear-tema, /test-crear-tema-encuesta, /test-crear-participante, /test-chat, /test-sintesis, /test-votar, /test-panorama-grupo, /grupos-publicos, /grupos/<codigo>, o /grupos/<codigo>/temas');
   }
 };
