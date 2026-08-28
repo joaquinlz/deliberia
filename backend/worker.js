@@ -248,6 +248,15 @@ Respondé ÚNICAMENTE con un objeto JSON válido, sin texto adicional, sin markd
 // Lee un stream SSE de Workers AI (líneas "data: {...}") y devuelve el texto completo
 // acumulado. Se usa del lado del servidor para poder guardar el resultado final en D1
 // mientras el mismo stream (una copia, vía tee()) se le va mandando en vivo al navegador.
+function extraerDeltaContenido(evt) {
+  // El streaming de Workers AI viene en formato tipo OpenAI: el texto real de la
+  // respuesta va en choices[0].delta.content; los modelos "razonadores" como Qwen
+  // además mandan choices[0].delta.reasoning con su "pensamiento" interno, que NUNCA
+  // debe mezclarse con el resultado final (rompería el JSON).
+  const delta = evt.choices && evt.choices[0] && evt.choices[0].delta;
+  return (delta && delta.content) || '';
+}
+
 async function acumularStreamIA(stream) {
   const reader = stream.getReader();
   const decoder = new TextDecoder();
@@ -264,8 +273,7 @@ async function acumularStreamIA(stream) {
       const dataStr = linea.slice(6).trim();
       if (!dataStr || dataStr === '[DONE]') continue;
       try {
-        const evt = JSON.parse(dataStr);
-        if (evt.response) texto += evt.response;
+        texto += extraerDeltaContenido(JSON.parse(dataStr));
       } catch (e) {}
     }
   }
