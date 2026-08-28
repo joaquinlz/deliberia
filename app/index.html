@@ -630,7 +630,7 @@ function personasVotaron(n, sufijoEs, sufijoEn){
   if(state.lang === 'en'){
     return n + ' ' + (n===1 ? 'person voted' : 'people voted') + (sufijoEn ? ' ' + sufijoEn : '') + '.';
   }
-  return n + ' persona' + (n===1?'':'s') + ' votaron' + (sufijoEs ? ' ' + sufijoEs : '') + '.';
+  return n + ' persona' + (n===1?'':'s') + (n===1?' votó':' votaron') + (sufijoEs ? ' ' + sufijoEs : '') + '.';
 }
 
 function votosTexto(n){
