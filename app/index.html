@@ -2503,6 +2503,7 @@ function renderParticipantChat(){
         ${state.busy ? `<div class="msg ai typing">${tr('escribiendo')}</div>` : ''}
       </div>
       <div class="chat-actions" style="margin-top:0;">
+        <button type="button" class="btn btn-ghost btn-sm modo-chip ${state.modoHerramienta==='busqueda_web'?'modo-activo':''}" id="modo-busqueda-web" ${state.busy?'disabled':''}>${tr('modoBusquedaWeb')}</button>
         <button type="button" class="btn btn-ghost btn-sm modo-chip ${state.modoHerramienta==='ver_transcripcion_literal'?'modo-activo':''}" id="modo-este-tema" ${state.busy?'disabled':''}>${tr('modoEsteTema')}</button>
       </div>
       ${state.modoHerramienta ? `<p class="footer-note" id="modo-aviso" style="margin-top:4px;">${tr('modoActivoAviso')}</p>` : ''}
@@ -2536,6 +2537,12 @@ function renderParticipantChat(){
   if(retryBtn) retryBtn.onclick = () => sendToAI(null);
   document.getElementById('modo-este-tema').onclick = () => {
     state.modoHerramienta = state.modoHerramienta === 'ver_transcripcion_literal' ? null : 'ver_transcripcion_literal';
+    render();
+    const el = document.getElementById('msg-input');
+    if(el) el.focus();
+  };
+  document.getElementById('modo-busqueda-web').onclick = () => {
+    state.modoHerramienta = state.modoHerramienta === 'busqueda_web' ? null : 'busqueda_web';
     render();
     const el = document.getElementById('msg-input');
     if(el) el.focus();
