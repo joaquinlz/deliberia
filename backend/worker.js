@@ -99,11 +99,16 @@ async function crearGrupo(env, body) {
   return { codigo, nombre, publico, creado };
 }
 
-async function verificarPin(env, codigo, pin) {
+async function verificarPin(env, codigo, pin, tipo) {
   const grupo = await env.DB.prepare(
-    "SELECT pin_hash FROM grupos WHERE codigo = ?"
+    "SELECT pin_hash, pin_acceso_hash FROM grupos WHERE codigo = ?"
   ).bind(codigo).first();
   if (!grupo) return { error: 'No existe ese grupo.' };
+  if (tipo === 'acceso') {
+    if (!grupo.pin_acceso_hash) return { correcto: true };
+    const hash = await hashPin(pin || '');
+    return { correcto: hash === grupo.pin_acceso_hash };
+  }
   const hash = await hashPin(pin || '');
   return { correcto: hash === grupo.pin_hash };
 }
@@ -532,7 +537,7 @@ async function handleRequest(request, env) {
     if (url.pathname.startsWith('/grupos/') && url.pathname.endsWith('/verificar-pin') && request.method === 'POST') {
       const codigo = url.pathname.split('/')[2];
       const body = await request.json();
-      const resultado = await verificarPin(env, codigo, body.pin);
+      const resultado = await verificarPin(env, codigo, body.pin, body.tipo);
       if (resultado.error) return Response.json(resultado, { status: 404 });
       return Response.json(resultado);
     }
@@ -622,10 +627,16 @@ async function handleRequest(request, env) {
     if (url.pathname.startsWith('/grupos/') && request.method === 'GET') {
       const codigo = url.pathname.split('/')[2];
       const grupo = await env.DB.prepare(
-        "SELECT codigo, nombre, publico, creado FROM grupos WHERE codigo = ?"
+        "SELECT codigo, nombre, publico, creado, pin_acceso_hash FROM grupos WHERE codigo = ?"
       ).bind(codigo).first();
       if (!grupo) return Response.json({ error: 'No existe ese grupo.' }, { status: 404 });
-      return Response.json(grupo);
+      return Response.json({
+        codigo: grupo.codigo,
+        nombre: grupo.nombre,
+        publico: grupo.publico,
+        creado: grupo.creado,
+        tienePinAcceso: !!grupo.pin_acceso_hash
+      });
     }
 
     if (url.pathname === '/test-verificar-pin') {
