@@ -886,6 +886,57 @@ async function apiPost(path, body){
   return api(path, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify(body || {}) });
 }
 
+// Para operaciones largas (síntesis, panorama de grupo) el backend devuelve la respuesta
+// de la IA en vivo (streaming), no todo junto al final. Esta función va leyendo esos
+// fragmentos a medida que llegan, junta solo el contenido real (nunca el "pensamiento
+// interno" del modelo, que viaja por separado) y llama a onProgress con la cantidad de
+// caracteres recibidos hasta el momento, para poder animar una barra de progreso.
+async function streamPost(path, onProgress){
+  let res;
+  try{
+    res = await fetch(API_BASE + path, { method: 'POST' });
+  }catch(e){
+    return { error: 'api_error_conexion' };
+  }
+  if(!res.ok){
+    let data = null;
+    try{ data = await res.json(); }catch(e){}
+    return { error: (data && data.error) || ('api_error_' + res.status) };
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  let texto = '';
+  let totalChars = 0;
+  while(true){
+    const { done, value } = await reader.read();
+    if(done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lineas = buffer.split('\n');
+    buffer = lineas.pop();
+    for(const linea of lineas){
+      if(!linea.startsWith('data: ')) continue;
+      const dataStr = linea.slice(6).trim();
+      if(!dataStr || dataStr === '[DONE]') continue;
+      try{
+        const evt = JSON.parse(dataStr);
+        const delta = evt.choices && evt.choices[0] && evt.choices[0].delta;
+        if(delta){
+          if(delta.content) texto += delta.content;
+          totalChars += (delta.content ? delta.content.length : 0) + (delta.reasoning ? delta.reasoning.length : 0);
+          if(onProgress) onProgress(totalChars);
+        }
+      }catch(e){}
+    }
+  }
+  try{
+    const limpio = texto.replace(/```json|```/g, '').trim();
+    return JSON.parse(limpio);
+  }catch(e){
+    return { error: 'La IA no devolvió un resultado válido. Probá de nuevo.' };
+  }
+}
+
 /* Todas las claves de datos de un espacio quedan prefijadas automáticamente con su código,
    así el resto del código (temas, conversaciones, síntesis, perfiles) no necesita saber
    que existen múltiples espacios aislados: solo opera "dentro" del suyo. */
@@ -2039,7 +2090,11 @@ function renderPanoramaGrupoPublico(){
   };
   document.getElementById('gen-pg').onclick = async () => {
     state.busy = true; state.error=''; state.errorPanoramaGrupo=''; render();
-    const p = await apiPost('/grupos/' + g.codigo + '/panorama');
+    const presupuestoAprox = 12000;
+    const p = await streamPost('/grupos/' + g.codigo + '/panorama', (chars) => {
+      actualizarBarraProgreso('progreso-pg', (chars / presupuestoAprox) * 100);
+    });
+    ocultarBarraProgreso('progreso-pg');
     if(p.error) state.errorPanoramaGrupo = p.error === 'Todavía no hay síntesis de temas suficientes para armar el panorama del grupo.' ? tr('pgSinSintesis') : p.error;
     else state.panoramaGrupoActual = p;
     state.busy = false; render();
@@ -2496,7 +2551,14 @@ function renderParticipantRegistro(){
   document.getElementById('back').onclick = () => { state.view='p-topics'; render(); };
   document.getElementById('gen-synth').onclick = async () => {
     state.busy = true; state.error=''; render();
-    const s = await apiPost('/grupos/' + state.workspaceId + '/temas/' + t.id + '/sintesis');
+    // El total real de caracteres varía según cuánto "piensa" el modelo antes de
+    // responder — esto es solo una referencia aproximada para animar la barra,
+    // no una medición exacta.
+    const presupuestoAprox = 12000;
+    const s = await streamPost('/grupos/' + state.workspaceId + '/temas/' + t.id + '/sintesis', (chars) => {
+      actualizarBarraProgreso('progreso-synth', (chars / presupuestoAprox) * 100);
+    });
+    ocultarBarraProgreso('progreso-synth');
     if(s.error) state.error = s.error === 'Todavía no hay conversaciones en este tema.' ? tr('pChatSinConversaciones') : tr('errorGeneracion');
     else state.synth = s;
     state.busy = false; render();
