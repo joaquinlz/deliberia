@@ -825,10 +825,66 @@ function calcularMaxTokensSintesis(textoLength){
   return 4000;
 }
 
-async function rawStorageGet(key, shared){ try{ return await window.storage.get(key, !!shared); }catch(e){ return null; } }
-async function rawStorageSet(key, value, shared){ try{ return await window.storage.set(key, value, !!shared); }catch(e){ return null; } }
-async function rawStorageList(prefix, shared){ try{ const r = await window.storage.list(prefix, !!shared); return r ? r.keys : []; }catch(e){ return []; } }
-async function rawStorageDelete(key, shared){ try{ await window.storage.delete(key, !!shared); }catch(e){} }
+/* Reemplazo de window.storage (exclusivo del sandbox de claude.ai) por localStorage para todo
+   lo "privado" (shared=false: por navegador/dispositivo — idioma, grupos recientes, perfil,
+   identidad de moderador). Los datos compartidos entre participantes (shared=true) ya NO
+   pasan por acá: cada función que los necesita llama directo a la API del backend. */
+async function rawStorageGet(key, shared){
+  if(!shared){
+    try{ const v = localStorage.getItem('deliberia:' + key); return v === null ? null : { value: v }; }catch(e){ return null; }
+  }
+  console.warn('rawStorageGet(shared=true) sin migrar a la API:', key);
+  return null;
+}
+async function rawStorageSet(key, value, shared){
+  if(!shared){
+    try{ localStorage.setItem('deliberia:' + key, value); return true; }catch(e){ return null; }
+  }
+  console.warn('rawStorageSet(shared=true) sin migrar a la API:', key);
+  return null;
+}
+async function rawStorageList(prefix, shared){
+  if(!shared){
+    try{
+      const out = [];
+      const p = 'deliberia:' + prefix;
+      for(let i = 0; i < localStorage.length; i++){
+        const k = localStorage.key(i);
+        if(k && k.startsWith(p)) out.push(k.slice('deliberia:'.length));
+      }
+      return out;
+    }catch(e){ return []; }
+  }
+  console.warn('rawStorageList(shared=true) sin migrar a la API:', prefix);
+  return [];
+}
+async function rawStorageDelete(key, shared){
+  if(!shared){
+    try{ localStorage.removeItem('deliberia:' + key); }catch(e){}
+    return;
+  }
+  console.warn('rawStorageDelete(shared=true) sin migrar a la API:', key);
+}
+
+/* Cliente del backend real (Cloudflare Worker). Reemplaza al storage compartido y al proxy
+   de IA de claude.ai para todo lo que involucra datos de más de una persona: grupos, temas,
+   participantes, mensajes, síntesis, votos y panorama de grupo. */
+const API_BASE = 'https://deliberia-backend.joaquinlocati.workers.dev';
+async function api(path, options){
+  try{
+    const res = await fetch(API_BASE + path, options);
+    let data = null;
+    try{ data = await res.json(); }catch(e){}
+    if(!res.ok) return { error: (data && data.error) || ('api_error_' + res.status) };
+    return data;
+  }catch(e){
+    return { error: 'api_error_conexion' };
+  }
+}
+async function apiGet(path){ return api(path); }
+async function apiPost(path, body){
+  return api(path, { method:'POST', headers:{ 'Content-Type':'application/json' }, body: JSON.stringify(body || {}) });
+}
 
 /* Todas las claves de datos de un espacio quedan prefijadas automáticamente con su código,
    así el resto del código (temas, conversaciones, síntesis, perfiles) no necesita saber
@@ -1060,8 +1116,8 @@ async function listarGruposPublicos(){
 }
 
 async function loadTemas(){
-  const r = await storageGet('config:temas', true);
-  state.temas = r ? JSON.parse(r.value) : [];
+  const r = await apiGet('/grupos/' + state.workspaceId + '/temas');
+  state.temas = Array.isArray(r) ? r : [];
 }
 async function saveTemas(){ await storageSet('config:temas', JSON.stringify(state.temas), true); }
 
@@ -1131,9 +1187,10 @@ async function countParticipantes(temaId){
 
 async function cargarEncuestaEstado(){
   if(state.temaActual && state.temaActual.encuesta){
-    state.encuestaResultados = await resultadosEncuesta(state.temaActual.id, state.temaActual.encuesta);
-    const votoR = await storageGet('voto:' + state.temaActual.id + ':' + state.participantId, true);
-    state.miVoto = votoR ? JSON.parse(votoR.value) : [];
+    const res = await apiGet('/grupos/' + state.workspaceId + '/temas/' + state.temaActual.id + '/votos/resultados');
+    state.encuestaResultados = (res && !res.error) ? res : { counts: state.temaActual.encuesta.opciones.map(()=>0), totalVotantes: 0 };
+    const miVotoR = await apiGet('/grupos/' + state.workspaceId + '/temas/' + state.temaActual.id + '/votos?participanteId=' + encodeURIComponent(state.participantId));
+    state.miVoto = (miVotoR && Array.isArray(miVotoR.opciones)) ? miVotoR.opciones : [];
   } else {
     state.encuestaResultados = null;
     state.miVoto = [];
@@ -1789,10 +1846,10 @@ async function renderLanding(){
   document.getElementById('go-acerca').onclick = () => { state.view = 'acerca'; render(); };
   document.querySelectorAll('.reciente-btn').forEach(b => b.onclick = async () => {
     const codigo = b.dataset.codigo;
-    const meta = await rawStorageGet('wsmeta:' + codigo, true);
-    if(!meta){ state.errorLanding = tr('landGrupoNoDisponible'); render(); return; }
+    const meta = await apiGet('/grupos/' + encodeURIComponent(codigo));
+    if(!meta || meta.error){ state.errorLanding = tr('landGrupoNoDisponible'); render(); return; }
     state.workspaceId = codigo;
-    state.workspaceMeta = JSON.parse(meta.value);
+    state.workspaceMeta = meta;
     await agregarGrupoReciente(codigo, state.workspaceMeta.nombre);
     state.errorLanding = '';
     state.view = 'role'; render();
@@ -1801,10 +1858,10 @@ async function renderLanding(){
   const irUnirse = async () => {
     const codigo = codigoInput.value.trim();
     if(!codigo){ state.errorLanding = tr('landIngresaCodigo'); render(); return; }
-    const meta = await rawStorageGet('wsmeta:' + codigo, true);
-    if(!meta){ state.errorLanding = tr('landNoEncontramos'); render(); return; }
+    const meta = await apiGet('/grupos/' + encodeURIComponent(codigo));
+    if(!meta || meta.error){ state.errorLanding = tr('landNoEncontramos'); render(); return; }
     state.workspaceId = codigo;
-    state.workspaceMeta = JSON.parse(meta.value);
+    state.workspaceMeta = meta;
     await agregarGrupoReciente(codigo, state.workspaceMeta.nombre);
     state.errorLanding = '';
     state.view = 'role'; render();
@@ -2048,28 +2105,19 @@ function renderCrearEspacio(){
     if(!nombre || !pin){ document.getElementById('ce-err').textContent = tr('crearFaltaDatos'); return; }
     const btnCrear = document.getElementById('ce-crear');
     btnCrear.disabled = true;
-    if(!(await nombreDeGrupoDisponible(nombre))){
-      document.getElementById('ce-err').textContent = tr('crearNombreEnUso');
+    const publico = document.getElementById('ce-publico').checked;
+    const resultado = await apiPost('/grupos', { nombre, pin, pinAcceso, publico });
+    if(resultado.error){
+      document.getElementById('ce-err').textContent = resultado.error === 'Ya existe un grupo con ese nombre.' ? tr('crearNombreEnUso') : resultado.error;
       btnCrear.disabled = false;
       return;
     }
-    let base = slugify(nombre);
-    let codigo = base;
-    let intento = 0;
-    while(await rawStorageGet('wsmeta:' + codigo, true)){
-      intento++;
-      codigo = base + '-' + Math.random().toString(36).slice(2, 6);
-      if(intento > 6) break;
-    }
-    const publico = document.getElementById('ce-publico').checked;
-    const meta = { nombre, pinHash: await hashPin(pin), pinAccesoHash: pinAcceso ? await hashPin(pinAcceso) : null, publico, creado: Date.now() };
-    await rawStorageSet('wsmeta:' + codigo, JSON.stringify(meta), true);
-    state.workspaceId = codigo;
-    state.workspaceMeta = meta;
+    state.workspaceId = resultado.codigo;
+    state.workspaceMeta = resultado;
     state.pinPlano = pin;
     state.pinAccesoPlano = pinAcceso || '';
     await storageSet('creador', 'true', false);
-    await agregarGrupoReciente(codigo, nombre);
+    await agregarGrupoReciente(resultado.codigo, nombre);
     state.view = 'espacio-creado'; render();
   };
 }
@@ -2137,36 +2185,20 @@ function renderAccesoPin(){
   document.getElementById('back').onclick = () => { state.view='role'; render(); };
   const submit = async () => {
     const v = document.getElementById('ap-pin').value.trim();
-    let ok = false;
-    if(state.workspaceMeta.pinAccesoHash){
-      ok = (await hashPin(v)) === state.workspaceMeta.pinAccesoHash;
-    } else if(state.workspaceMeta.pinAcceso){
-      ok = v === state.workspaceMeta.pinAcceso;
-      if(ok){
-        delete state.workspaceMeta.pinAcceso;
-        state.workspaceMeta.pinAccesoHash = await hashPin(v);
-        await rawStorageSet('wsmeta:' + state.workspaceId, JSON.stringify(state.workspaceMeta), true);
-      }
-    }
-    if(!ok){ document.getElementById('ap-err').textContent = tr('pinIncorrecto'); return; }
+    const resultado = await apiPost('/grupos/' + state.workspaceId + '/verificar-pin', { pin: v, tipo: 'acceso' });
+    if(!resultado.correcto){ document.getElementById('ap-err').textContent = tr('pinIncorrecto'); return; }
     state.accesoDesbloqueado = true;
     const perfilR = await storageGet('mi-perfil', false);
-    state.savedName = perfilR ? (JSON.parse(perfilR.value).name || '') : '';
-    if(!state.savedName){
+    const perfil = perfilR ? JSON.parse(perfilR.value) : null;
+    if(perfil && perfil.name && perfil.participantId){
+      state.savedName = perfil.name;
+      state.participantId = perfil.participantId;
+    } else {
       const globalR = await rawStorageGet('perfil-global', false);
-      const nombreGlobal = globalR ? (JSON.parse(globalR.value).name || '') : '';
-      if(nombreGlobal && await nombreDisponibleEnGrupo(nombreGlobal)){
-        await registrarNombreEnGrupo(nombreGlobal);
-        await storageSet('mi-perfil', JSON.stringify({ name: nombreGlobal }), false);
-        state.savedName = nombreGlobal;
-      } else {
-        state.nombreSugerido = nombreGlobal || '';
-        state.view = 'p-nombre'; render(); return;
-      }
+      state.nombreSugerido = globalR ? (JSON.parse(globalR.value).name || '') : '';
+      state.view = 'p-nombre'; render(); return;
     }
     await loadTemas();
-    await loadAjustes();
-    for(const t of state.temas){ await cargarStatsTema(t); }
     state.view = 'p-topics'; render();
   };
   document.getElementById('ap-entrar').onclick = submit;
@@ -2194,19 +2226,16 @@ function renderParticipantNombre(){
   const continuar = async () => {
     const nombre = document.getElementById('pn-nombre').value.trim();
     if(!nombre){ document.getElementById('pn-err').textContent = tr('pNombreFalta'); return; }
-    if(!(await nombreDisponibleEnGrupo(nombre))){
+    const resultado = await apiPost('/grupos/' + state.workspaceId + '/participantes', { nombre });
+    if(resultado.error){
       document.getElementById('pn-err').textContent = tr('pNombreEnUso');
       return;
     }
-    await registrarNombreEnGrupo(nombre);
     state.savedName = nombre;
-    await storageSet('mi-perfil', JSON.stringify({ name: nombre }), false);
-    if(!state.nombreSugerido){
-      await rawStorageSet('perfil-global', JSON.stringify({ name: nombre }), false);
-    }
+    state.participantId = resultado.id;
+    await storageSet('mi-perfil', JSON.stringify({ name: nombre, participantId: resultado.id }), false);
+    await rawStorageSet('perfil-global', JSON.stringify({ name: nombre }), false);
     await loadTemas();
-    await loadAjustes();
-    for(const t of state.temas){ await cargarStatsTema(t); }
     state.view = 'p-topics'; render();
   };
   document.getElementById('pn-continuar').onclick = continuar;
@@ -2236,26 +2265,20 @@ function renderRole(){
     </div>
   `;
   document.getElementById('go-participant').onclick = async () => {
-    if(state.workspaceMeta && (state.workspaceMeta.pinAccesoHash || state.workspaceMeta.pinAcceso) && !state.accesoDesbloqueado){
+    if(state.workspaceMeta && state.workspaceMeta.tienePinAcceso && !state.accesoDesbloqueado){
       state.view = 'p-acceso-pin'; render(); return;
     }
     const perfilR = await storageGet('mi-perfil', false);
-    state.savedName = perfilR ? (JSON.parse(perfilR.value).name || '') : '';
-    if(!state.savedName){
+    const perfil = perfilR ? JSON.parse(perfilR.value) : null;
+    if(perfil && perfil.name && perfil.participantId){
+      state.savedName = perfil.name;
+      state.participantId = perfil.participantId;
+    } else {
       const globalR = await rawStorageGet('perfil-global', false);
-      const nombreGlobal = globalR ? (JSON.parse(globalR.value).name || '') : '';
-      if(nombreGlobal && await nombreDisponibleEnGrupo(nombreGlobal)){
-        await registrarNombreEnGrupo(nombreGlobal);
-        await storageSet('mi-perfil', JSON.stringify({ name: nombreGlobal }), false);
-        state.savedName = nombreGlobal;
-      } else {
-        state.nombreSugerido = nombreGlobal || '';
-        state.view = 'p-nombre'; render(); return;
-      }
+      state.nombreSugerido = globalR ? (JSON.parse(globalR.value).name || '') : '';
+      state.view = 'p-nombre'; render(); return;
     }
     await loadTemas();
-    await loadAjustes();
-    for(const t of state.temas){ await cargarStatsTema(t); }
     state.view = 'p-topics'; render();
   };
   document.getElementById('go-moderator').onclick = () => { state.view = 'mod-pin'; render(); };
@@ -2343,40 +2366,24 @@ function renderParticipantTopics(){
     state.temaActual = tema;
     state.groupContextText = '';
     state.error = '';
-    await asegurarTraduccionesTemas([tema]);
-    const identidad = await tryResumirIdentidad(tema.id);
-    if(identidad){
-      state.participantId = identidad.participantId;
-      state.participantName = identidad.name;
-      const convR = await storageGet('conversacion:' + tema.id + ':' + identidad.participantId, true);
-      state.messages = convR ? (JSON.parse(convR.value).messages || []) : [];
-      state.resumed = true;
-      await cargarEncuestaEstado();
-      state.view = 'p-chat'; render();
-      if(state.messages.length === 0) await sendToAI(null);
-    } else if(state.savedName){
-      state.participantName = state.savedName;
-      state.participantId = uid();
-      state.messages = [];
-      await storageSet('mi-identidad:' + tema.id, JSON.stringify({ participantId: state.participantId, name: state.savedName }), false);
-      await cargarEncuestaEstado();
-      state.resumed = false;
-      state.view = 'p-chat'; render();
-      await sendToAI(null);
-    } else {
-      state.resumed = false;
-      state.view = 'p-start'; render();
-    }
+    state.participantName = state.savedName;
+    const mensajes = await apiGet('/grupos/' + state.workspaceId + '/temas/' + tema.id + '/mensajes?participanteId=' + encodeURIComponent(state.participantId));
+    state.messages = Array.isArray(mensajes) ? mensajes : [];
+    state.resumed = state.messages.length > 0;
+    await cargarEncuestaEstado();
+    state.view = 'p-chat'; render();
+    if(state.messages.length === 0) await sendToAI(null);
   });
   document.querySelectorAll('.tema-registro').forEach(b => b.onclick = async () => {
     const tema = state.temas.find(t => t.id === b.dataset.id);
     state.temaActual = tema;
     state.error = '';
-    const s = await storageGet('sintesis:' + tema.id, true);
-    const sRaw = s ? JSON.parse(s.value) : null;
-    state.synth = await obtenerSintesisEnIdioma(sRaw, async (obj) => { await storageSet('sintesis:' + tema.id, JSON.stringify(obj), true); });
-    if(tema.encuesta) state.encuestaResultados = await resultadosEncuesta(tema.id, tema.encuesta);
-    else state.encuestaResultados = null;
+    const s = await apiGet('/grupos/' + state.workspaceId + '/temas/' + tema.id + '/sintesis');
+    state.synth = (s && !s.error) ? s : null;
+    if(tema.encuesta){
+      const res = await apiGet('/grupos/' + state.workspaceId + '/temas/' + tema.id + '/votos/resultados');
+      state.encuestaResultados = (res && !res.error) ? res : null;
+    } else state.encuestaResultados = null;
     state.view = 'p-registro'; render();
   });
 }
@@ -2493,9 +2500,8 @@ function renderParticipantRegistro(){
   document.getElementById('back').onclick = () => { state.view='p-topics'; render(); };
   document.getElementById('gen-synth').onclick = async () => {
     state.busy = true; state.error=''; render();
-    const s = await generarOSintesisCacheada(t.id, true, 'progreso-synth');
-    if(typeof s === 'string') state.error = s;
-    else if(!s) state.error = tr('pChatSinConversaciones');
+    const s = await apiPost('/grupos/' + state.workspaceId + '/temas/' + t.id + '/sintesis');
+    if(s.error) state.error = s.error === 'Todavía no hay conversaciones en este tema.' ? tr('pChatSinConversaciones') : tr('errorGeneracion');
     else state.synth = s;
     state.busy = false; render();
   };
@@ -2694,23 +2700,12 @@ async function sendToAI(userText){
   if(userText) state.messages.push({ role:'user', content:userText });
   render();
   try{
-    const historialParaAPI = state.messages.filter(m => !(m.content||'').startsWith('__PANORAMA__'));
-    const herramientaForzada = state.modoHerramienta || null;
-    state.modoHerramienta = null;
-    let reply;
-    if(herramientaForzada === 'ver_transcripcion_literal'){
-      const contexto = await verTranscripcionLiteral({});
-      const systemConContexto = chatSystemPrompt() + `\n\nIMPORTANTE PARA ESTE MENSAJE PUNTUAL: la persona pidió específicamente acceder al texto completo de las conversaciones de este tema. Te lo transcribo a continuación, tal cual está guardado — usalo para responder con precisión, citando literalmente si te lo piden. No hace falta que "busques" nada más, ya lo tenés acá:\n\n${contexto}`;
-      reply = await callClaude(historialParaAPI.length ? historialParaAPI : [{role:'user', content: state.lang === 'en' ? 'Hello' : 'Hola'}], systemConContexto, null, 2000);
-    } else {
-      reply = await chatConHerramientas(historialParaAPI.length ? historialParaAPI : [{role:'user', content: state.lang === 'en' ? 'Hello' : 'Hola'}], chatSystemPrompt(), herramientaForzada);
-    }
-    state.messages.push({ role:'assistant', content: reply });
-    const ahora = Date.now();
-    await storageSet('conversacion:' + state.temaActual.id + ':' + state.participantId, JSON.stringify({
-      name: state.participantName, temaId: state.temaActual.id, messages: state.messages, finished:false, ts: ahora
-    }), true);
-    await patchTema(state.temaActual.id, x => { x.ultimaActividad = ahora; });
+    const resultado = await apiPost(
+      '/grupos/' + state.workspaceId + '/temas/' + state.temaActual.id + '/mensajes',
+      { participanteId: state.participantId, mensaje: userText || '' }
+    );
+    if(resultado.error) throw new Error(resultado.error);
+    state.messages.push({ role:'assistant', content: resultado.respuesta });
   }catch(e){
     state.error = mensajeErrorIA(e);
   }
@@ -2721,16 +2716,10 @@ async function sendToAI(userText){
 async function verPanoramaGrupo(){
   state.busy = true; state.error=''; render();
   try{
-    const s = await generarOSintesisCacheada(state.temaActual.id, false);
-    if(typeof s === 'string'){ state.error = s; state.busy=false; render(); return; }
-    if(!s){ state.error = tr('pChatSinConversaciones'); state.busy=false; render(); return; }
+    const s = await apiPost('/grupos/' + state.workspaceId + '/temas/' + state.temaActual.id + '/sintesis');
+    if(s.error){ state.error = tr('pChatSinConversaciones'); state.busy=false; render(); return; }
     state.groupContextText = formatSynthAsText(s);
     state.messages.push({ role:'assistant', content: '__PANORAMA__' + JSON.stringify(s) });
-    const ahora = Date.now();
-    await storageSet('conversacion:' + state.temaActual.id + ':' + state.participantId, JSON.stringify({
-      name: state.participantName, temaId: state.temaActual.id, messages: state.messages, finished:false, ts: ahora
-    }), true);
-    await patchTema(state.temaActual.id, x => { x.ultimaActividad = ahora; });
   }catch(e){
     state.error = tr('pChatNoSePudoGenerarPanorama');
   }
@@ -2819,11 +2808,6 @@ function renderParticipantChat(){
       <div class="chat-actions">
         <button class="btn btn-teal btn-sm" id="ver-panorama" ${state.busy?'disabled':''}>${tr('pChatVerPanorama')}</button>
       </div>
-      <div class="chat-actions" style="margin-top:0;">
-        <button type="button" class="btn btn-ghost btn-sm modo-chip ${state.modoHerramienta==='web_search'?'modo-activo':''}" id="modo-web" ${state.busy?'disabled':''}>${tr('modoBusquedaWeb')}</button>
-        <button type="button" class="btn btn-ghost btn-sm modo-chip ${state.modoHerramienta==='ver_transcripcion_literal'?'modo-activo':''}" id="modo-este-tema" ${state.busy?'disabled':''}>${tr('modoEsteTema')}</button>
-      </div>
-      ${state.modoHerramienta ? `<p class="footer-note" id="modo-aviso" style="margin-top:4px;">${tr('modoActivoAviso')}</p>` : ''}
       <div class="chat-input-row">
         <textarea id="msg-input" placeholder="${tr('pChatPlaceholder')}" maxlength="4000" ${state.busy?'disabled':''}></textarea>
         <button class="btn btn-primary" id="send-btn" ${state.busy?'disabled':''}>${tr('enviar')}</button>
@@ -2838,7 +2822,7 @@ function renderParticipantChat(){
   logEl.scrollTop = logEl.scrollHeight;
   asegurarTraduccionesTemas([state.temaActual]);
   document.getElementById('back').onclick = async () => {
-    for(const t of state.temas){ await cargarStatsTema(t); }
+    await loadTemas();
     state.view = 'p-topics'; render();
   };
   const input = document.getElementById('msg-input');
@@ -2853,35 +2837,6 @@ function renderParticipantChat(){
   const retryBtn = document.getElementById('retry-btn');
   if(retryBtn) retryBtn.onclick = () => sendToAI(null);
   document.getElementById('ver-panorama').onclick = verPanoramaGrupo;
-  const chipsModo = { modo_web: ['modo-web', 'web_search'], modo_este_tema: ['modo-este-tema', 'ver_transcripcion_literal'] };
-  const pintarChipsModo = () => {
-    Object.values(chipsModo).forEach(([btnId, nombreHerramienta]) => {
-      const btn = document.getElementById(btnId);
-      if(btn) btn.classList.toggle('modo-activo', state.modoHerramienta === nombreHerramienta);
-    });
-    let aviso = document.getElementById('modo-aviso');
-    if(state.modoHerramienta){
-      if(!aviso){
-        aviso = document.createElement('p');
-        aviso.id = 'modo-aviso';
-        aviso.className = 'footer-note';
-        aviso.style.marginTop = '4px';
-        document.getElementById('modo-este-tema').closest('.chat-actions').insertAdjacentElement('afterend', aviso);
-      }
-      aviso.textContent = tr('modoActivoAviso');
-    } else if(aviso){
-      aviso.remove();
-    }
-  };
-  const conectarChipModo = (btnId, nombreHerramienta) => {
-    document.getElementById(btnId).onclick = () => {
-      state.modoHerramienta = (state.modoHerramienta === nombreHerramienta) ? null : nombreHerramienta;
-      pintarChipsModo();
-      document.getElementById('msg-input').focus();
-    };
-  };
-  conectarChipModo('modo-web', 'web_search');
-  conectarChipModo('modo-este-tema', 'ver_transcripcion_literal');
   conectarVotosEncuesta();
 }
 
@@ -2895,9 +2850,11 @@ function conectarVotosEncuesta(){
     } else {
       nuevo = (state.miVoto.length === 1 && state.miVoto[0] === i) ? [] : [i];
     }
+    if(nuevo.length === 0) return; // por ahora no se puede dejar la encuesta sin ningún voto
     state.miVoto = nuevo;
-    await storageSet('voto:' + state.temaActual.id + ':' + state.participantId, JSON.stringify(nuevo), true);
-    state.encuestaResultados = await resultadosEncuesta(state.temaActual.id, enc);
+    await apiPost('/grupos/' + state.workspaceId + '/temas/' + state.temaActual.id + '/votos', { participanteId: state.participantId, opciones: nuevo });
+    const res = await apiGet('/grupos/' + state.workspaceId + '/temas/' + state.temaActual.id + '/votos/resultados');
+    state.encuestaResultados = (res && !res.error) ? res : state.encuestaResultados;
     render();
   });
 }
@@ -3521,10 +3478,10 @@ async function boot(){
   pintarLangSwitch();
   const codigo = decodeURIComponent((location.hash || '').replace(/^#/, '')).trim();
   if(codigo){
-    const meta = await rawStorageGet('wsmeta:' + codigo, true);
-    if(meta){
+    const meta = await apiGet('/grupos/' + encodeURIComponent(codigo));
+    if(meta && !meta.error){
       state.workspaceId = codigo;
-      state.workspaceMeta = JSON.parse(meta.value);
+      state.workspaceMeta = meta;
       state.view = 'role';
     } else {
       state.errorLanding = tr('landNoEncontramosLink');
