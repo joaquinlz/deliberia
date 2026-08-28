@@ -5,8 +5,22 @@
 // GET  /grupos/:codigo           → devuelve los datos públicos de un grupo (nunca los PIN).
 // POST /grupos/:codigo/verificar-pin → compara un PIN contra el hash guardado, del lado
 //                                  del servidor — nunca le manda el hash al navegador.
-// POST /grupos/:codigo/temas     → crea un tema nuevo dentro de un grupo.
-// GET  /grupos/:codigo/temas     → lista los temas aprobados de un grupo.
+// POST /grupos/:codigo/temas     → crea un tema nuevo dentro de un grupo (moderador o, si el
+//                                  grupo lo permite, un participante — que puede quedar pendiente
+//                                  de aprobación según los ajustes del grupo).
+// GET  /grupos/:codigo/temas     → lista los temas de un grupo (solo los aprobados, salvo que se
+//                                  pase ?todos=1, para el panel de moderador).
+// POST /grupos/:codigo/temas/:temaId → edita campos puntuales de un tema (título, descripción,
+//                                  estado, fijado, aprobado, encuesta) — solo actualiza lo que
+//                                  venga en el body.
+// POST /grupos/:codigo/temas/:temaId/eliminar → borra un tema y todo lo asociado (mensajes,
+//                                  votos, síntesis).
+// POST /grupos/:codigo/ajustes   → cambia ajustes del grupo (publico, permitirCrearTemas,
+//                                  requiereAprobacion) — solo actualiza lo que venga en el body.
+// POST /grupos/:codigo/pin-acceso → define o quita el PIN de acceso para participantes
+//                                  ({pinAcceso: "1234"} para definirlo, {pinAcceso: ""} para sacarlo).
+// POST /grupos/:codigo/eliminar  → borra el grupo entero y todo su contenido — requiere el PIN
+//                                  de moderador en el body ({pin: "..."}).
 // POST /grupos/:codigo/participantes → registra un participante nuevo (nombre único por grupo).
 // GET  /grupos/:codigo/participantes → lista los participantes de un grupo (id + nombre).
 // POST /grupos/:codigo/temas/:temaId/mensajes → manda un mensaje al chat de un tema (guarda el
@@ -96,7 +110,12 @@ async function crearGrupo(env, body) {
     "INSERT INTO grupos (codigo, nombre, pin_hash, pin_acceso_hash, publico, creado) VALUES (?, ?, ?, ?, ?, ?)"
   ).bind(codigo, nombre, pinHash, pinAccesoHash, publico ? 1 : 0, creado).run();
 
-  return { codigo, nombre, publico, creado };
+  return {
+    codigo, nombre, publico, creado,
+    tienePinAcceso: !!pinAccesoHash,
+    permitirCrearTemas: false,
+    requiereAprobacion: true
+  };
 }
 
 async function verificarPin(env, codigo, pin, tipo) {
@@ -114,12 +133,21 @@ async function verificarPin(env, codigo, pin, tipo) {
 }
 
 async function crearTema(env, codigo, body) {
-  const grupo = await env.DB.prepare("SELECT codigo FROM grupos WHERE codigo = ?").bind(codigo).first();
+  const grupo = await env.DB.prepare(
+    "SELECT codigo, permitir_crear_temas, requiere_aprobacion FROM grupos WHERE codigo = ?"
+  ).bind(codigo).first();
   if (!grupo) return { error: 'No existe ese grupo.' };
 
   const titulo = (body.titulo || '').trim();
   if (!titulo) return { error: 'Falta el título del tema.' };
   const descripcion = (body.descripcion || '').trim();
+
+  const creadoPor = body.creadoPor === 'participante' ? 'participante' : 'moderador';
+  if (creadoPor === 'participante' && !grupo.permitir_crear_temas) {
+    return { error: 'Este grupo no permite que los participantes propongan temas.' };
+  }
+  const creadorNombre = creadoPor === 'participante' ? ((body.creadorNombre || '').trim().slice(0, 60) || null) : null;
+  const aprobado = creadoPor === 'moderador' || !grupo.requiere_aprobacion ? 1 : 0;
 
   let encuestaPregunta = null, encuestaOpciones = null, encuestaMultiple = 0;
   if (body.encuesta && body.encuesta.pregunta && Array.isArray(body.encuesta.opciones) && body.encuesta.opciones.length >= 2) {
@@ -132,11 +160,15 @@ async function crearTema(env, codigo, body) {
   const creado = Date.now();
 
   await env.DB.prepare(
-    `INSERT INTO temas (id, grupo_codigo, titulo, descripcion, estado, fijado, aprobado, encuesta_pregunta, encuesta_opciones, encuesta_multiple, creado, ultima_actividad)
-     VALUES (?, ?, ?, ?, 'activo', 0, 1, ?, ?, ?, ?, ?)`
-  ).bind(id, codigo, titulo, descripcion, encuestaPregunta, encuestaOpciones, encuestaMultiple, creado, creado).run();
+    `INSERT INTO temas (id, grupo_codigo, titulo, descripcion, estado, fijado, aprobado, encuesta_pregunta, encuesta_opciones, encuesta_multiple, creado, ultima_actividad, creado_por, creador_nombre)
+     VALUES (?, ?, ?, ?, 'activo', 0, ?, ?, ?, ?, ?, ?, ?, ?)`
+  ).bind(id, codigo, titulo, descripcion, aprobado, encuestaPregunta, encuestaOpciones, encuestaMultiple, creado, creado, creadoPor, creadorNombre).run();
 
-  return { id, grupo_codigo: codigo, titulo, descripcion, estado: 'activo', creado };
+  return {
+    id, grupo_codigo: codigo, titulo, descripcion, estado: 'activo', creado, fijado: false,
+    aprobado: !!aprobado, creadoPor, creadorNombre,
+    encuesta: encuestaPregunta ? { pregunta: encuestaPregunta, opciones: JSON.parse(encuestaOpciones), multiple: !!encuestaMultiple } : null
+  };
 }
 
 async function crearParticipante(env, codigo, body) {
@@ -548,8 +580,9 @@ async function listarTemas(env, codigo, incluirNoAprobados) {
   const filtroAprobado = incluirNoAprobados ? '' : 'AND t.aprobado = 1';
   const { results } = await env.DB.prepare(
     `SELECT t.id, t.titulo, t.descripcion, t.estado, t.fijado, t.aprobado, t.creado, t.ultima_actividad,
-            t.encuesta_pregunta, t.encuesta_opciones, t.encuesta_multiple,
-            COUNT(DISTINCT m.participante_id) AS cantidadParticipantes
+            t.encuesta_pregunta, t.encuesta_opciones, t.encuesta_multiple, t.creado_por, t.creador_nombre,
+            COUNT(DISTINCT m.participante_id) AS cantidadParticipantes,
+            COALESCE(SUM(LENGTH(m.content)), 0) AS totalChars
      FROM temas t
      LEFT JOIN mensajes m ON m.tema_id = t.id
      WHERE t.grupo_codigo = ? ${filtroAprobado}
@@ -565,12 +598,130 @@ async function listarTemas(env, codigo, incluirNoAprobados) {
     fijado: !!t.fijado,
     aprobado: !!t.aprobado,
     creado: t.creado,
+    creadoPor: t.creado_por || 'moderador',
+    creadorNombre: t.creador_nombre || null,
     _ultimaActividad: t.ultima_actividad,
     _count: t.cantidadParticipantes,
+    _totalChars: t.totalChars,
     encuesta: t.encuesta_pregunta
       ? { pregunta: t.encuesta_pregunta, opciones: JSON.parse(t.encuesta_opciones || '[]'), multiple: !!t.encuesta_multiple }
       : null
   }));
+}
+
+function mapearTema(t) {
+  return {
+    id: t.id,
+    titulo: t.titulo,
+    descripcion: t.descripcion,
+    estado: t.estado,
+    fijado: !!t.fijado,
+    aprobado: !!t.aprobado,
+    creado: t.creado,
+    creadoPor: t.creado_por || 'moderador',
+    creadorNombre: t.creador_nombre || null,
+    _ultimaActividad: t.ultima_actividad,
+    encuesta: t.encuesta_pregunta
+      ? { pregunta: t.encuesta_pregunta, opciones: JSON.parse(t.encuesta_opciones || '[]'), multiple: !!t.encuesta_multiple }
+      : null
+  };
+}
+
+async function actualizarTema(env, codigo, temaId, body) {
+  const tema = await env.DB.prepare("SELECT id FROM temas WHERE id = ? AND grupo_codigo = ?").bind(temaId, codigo).first();
+  if (!tema) return { error: 'No existe ese tema.' };
+
+  const campos = [];
+  const valores = [];
+  if (body.titulo !== undefined) {
+    const t = (body.titulo || '').trim();
+    if (!t) return { error: 'Falta el título del tema.' };
+    campos.push('titulo = ?'); valores.push(t);
+  }
+  if (body.descripcion !== undefined) { campos.push('descripcion = ?'); valores.push((body.descripcion || '').trim()); }
+  if (body.estado !== undefined) {
+    if (!['activo', 'pausado', 'terminado'].includes(body.estado)) return { error: 'Estado inválido.' };
+    campos.push('estado = ?'); valores.push(body.estado);
+  }
+  if (body.fijado !== undefined) { campos.push('fijado = ?'); valores.push(body.fijado ? 1 : 0); }
+  if (body.aprobado !== undefined) { campos.push('aprobado = ?'); valores.push(body.aprobado ? 1 : 0); }
+  if (body.encuesta !== undefined) {
+    if (body.encuesta && body.encuesta.pregunta && Array.isArray(body.encuesta.opciones) && body.encuesta.opciones.length >= 2) {
+      campos.push('encuesta_pregunta = ?'); valores.push(body.encuesta.pregunta);
+      campos.push('encuesta_opciones = ?'); valores.push(JSON.stringify(body.encuesta.opciones));
+      campos.push('encuesta_multiple = ?'); valores.push(body.encuesta.multiple ? 1 : 0);
+    } else {
+      campos.push('encuesta_pregunta = ?'); valores.push(null);
+      campos.push('encuesta_opciones = ?'); valores.push(null);
+      campos.push('encuesta_multiple = ?'); valores.push(0);
+    }
+  }
+  if (campos.length === 0) return { error: 'Nada para actualizar.' };
+
+  valores.push(temaId, codigo);
+  await env.DB.prepare(
+    `UPDATE temas SET ${campos.join(', ')} WHERE id = ? AND grupo_codigo = ?`
+  ).bind(...valores).run();
+
+  const actualizado = await env.DB.prepare(
+    `SELECT id, titulo, descripcion, estado, fijado, aprobado, creado, ultima_actividad,
+            encuesta_pregunta, encuesta_opciones, encuesta_multiple, creado_por, creador_nombre
+     FROM temas WHERE id = ?`
+  ).bind(temaId).first();
+  return mapearTema(actualizado);
+}
+
+async function eliminarTema(env, codigo, temaId) {
+  const tema = await env.DB.prepare("SELECT id FROM temas WHERE id = ? AND grupo_codigo = ?").bind(temaId, codigo).first();
+  if (!tema) return { error: 'No existe ese tema.' };
+  await env.DB.prepare("DELETE FROM mensajes WHERE tema_id = ?").bind(temaId).run();
+  await env.DB.prepare("DELETE FROM votos WHERE tema_id = ?").bind(temaId).run();
+  await env.DB.prepare("DELETE FROM sintesis WHERE tema_id = ?").bind(temaId).run();
+  await env.DB.prepare("DELETE FROM temas WHERE id = ?").bind(temaId).run();
+  return { ok: true };
+}
+
+async function actualizarAjustes(env, codigo, body) {
+  const grupo = await env.DB.prepare("SELECT codigo FROM grupos WHERE codigo = ?").bind(codigo).first();
+  if (!grupo) return { error: 'No existe ese grupo.' };
+
+  const campos = [];
+  const valores = [];
+  if (body.publico !== undefined) { campos.push('publico = ?'); valores.push(body.publico ? 1 : 0); }
+  if (body.permitirCrearTemas !== undefined) { campos.push('permitir_crear_temas = ?'); valores.push(body.permitirCrearTemas ? 1 : 0); }
+  if (body.requiereAprobacion !== undefined) { campos.push('requiere_aprobacion = ?'); valores.push(body.requiereAprobacion ? 1 : 0); }
+  if (campos.length === 0) return { error: 'Nada para actualizar.' };
+
+  valores.push(codigo);
+  await env.DB.prepare(`UPDATE grupos SET ${campos.join(', ')} WHERE codigo = ?`).bind(...valores).run();
+  return { ok: true };
+}
+
+async function actualizarPinAcceso(env, codigo, body) {
+  const grupo = await env.DB.prepare("SELECT codigo FROM grupos WHERE codigo = ?").bind(codigo).first();
+  if (!grupo) return { error: 'No existe ese grupo.' };
+  const pin = (body.pinAcceso || '').trim();
+  const hash = pin ? await hashPin(pin) : null;
+  await env.DB.prepare("UPDATE grupos SET pin_acceso_hash = ? WHERE codigo = ?").bind(hash, codigo).run();
+  return { tienePinAcceso: !!hash };
+}
+
+async function eliminarGrupo(env, codigo, body) {
+  const check = await verificarPin(env, codigo, body.pin);
+  if (check.error) return check;
+  if (!check.correcto) return { error: 'PIN incorrecto.' };
+
+  const { results: temas } = await env.DB.prepare("SELECT id FROM temas WHERE grupo_codigo = ?").bind(codigo).all();
+  for (const t of temas) {
+    await env.DB.prepare("DELETE FROM mensajes WHERE tema_id = ?").bind(t.id).run();
+    await env.DB.prepare("DELETE FROM votos WHERE tema_id = ?").bind(t.id).run();
+    await env.DB.prepare("DELETE FROM sintesis WHERE tema_id = ?").bind(t.id).run();
+  }
+  await env.DB.prepare("DELETE FROM panorama_grupo WHERE grupo_codigo = ?").bind(codigo).run();
+  await env.DB.prepare("DELETE FROM temas WHERE grupo_codigo = ?").bind(codigo).run();
+  await env.DB.prepare("DELETE FROM participantes WHERE grupo_codigo = ?").bind(codigo).run();
+  await env.DB.prepare("DELETE FROM grupos WHERE codigo = ?").bind(codigo).run();
+  return { ok: true };
 }
 
 function corsHeaders() {
@@ -666,7 +817,8 @@ async function handleRequest(request, env, ctx) {
 
     if (url.pathname.startsWith('/grupos/') && url.pathname.endsWith('/temas') && request.method === 'GET') {
       const codigo = url.pathname.split('/')[2];
-      const temas = await listarTemas(env, codigo);
+      const incluirNoAprobados = url.searchParams.get('todos') === '1';
+      const temas = await listarTemas(env, codigo, incluirNoAprobados);
       return Response.json(temas);
     }
 
@@ -676,14 +828,56 @@ async function handleRequest(request, env, ctx) {
       return Response.json(participantes);
     }
 
+    if (url.pathname.startsWith('/grupos/') && url.pathname.endsWith('/ajustes') && request.method === 'POST') {
+      const codigo = url.pathname.split('/')[2];
+      const body = await request.json();
+      const resultado = await actualizarAjustes(env, codigo, body);
+      if (resultado.error) return Response.json(resultado, { status: 400 });
+      return Response.json(resultado);
+    }
+
+    if (url.pathname.startsWith('/grupos/') && url.pathname.endsWith('/pin-acceso') && request.method === 'POST') {
+      const codigo = url.pathname.split('/')[2];
+      const body = await request.json();
+      const resultado = await actualizarPinAcceso(env, codigo, body);
+      if (resultado.error) return Response.json(resultado, { status: 400 });
+      return Response.json(resultado);
+    }
+
+    {
+      const partesGrupo = url.pathname.split('/').filter(Boolean);
+      if (partesGrupo.length === 3 && partesGrupo[0] === 'grupos' && partesGrupo[2] === 'eliminar' && request.method === 'POST') {
+        const codigo = partesGrupo[1];
+        const body = await request.json();
+        const resultado = await eliminarGrupo(env, codigo, body);
+        if (resultado.error) return Response.json(resultado, { status: 400 });
+        return Response.json(resultado);
+      }
+    }
+
     {
       const partes = url.pathname.split('/').filter(Boolean);
+      const esGrupoTema4 = partes.length === 4 && partes[0] === 'grupos' && partes[2] === 'temas';
       const esGrupoTema5 = partes.length === 5 && partes[0] === 'grupos' && partes[2] === 'temas';
       const esRutaMensajes = esGrupoTema5 && partes[4] === 'mensajes';
       const esRutaSintesis = esGrupoTema5 && partes[4] === 'sintesis';
       const esRutaVotos = esGrupoTema5 && partes[4] === 'votos';
+      const esRutaEliminarTema = esGrupoTema5 && partes[4] === 'eliminar';
       const esRutaResultadosVotos = partes.length === 6 && partes[0] === 'grupos' && partes[2] === 'temas' && partes[4] === 'votos' && partes[5] === 'resultados';
 
+      if (esGrupoTema4 && request.method === 'POST') {
+        const codigo = partes[1], temaId = partes[3];
+        const body = await request.json();
+        const resultado = await actualizarTema(env, codigo, temaId, body);
+        if (resultado.error) return Response.json(resultado, { status: 400 });
+        return Response.json(resultado);
+      }
+      if (esRutaEliminarTema && request.method === 'POST') {
+        const codigo = partes[1], temaId = partes[3];
+        const resultado = await eliminarTema(env, codigo, temaId);
+        if (resultado.error) return Response.json(resultado, { status: 400 });
+        return Response.json(resultado);
+      }
       if (esRutaResultadosVotos && request.method === 'GET') {
         const codigo = partes[1], temaId = partes[3];
         const resultado = await resultadosVotos(env, codigo, temaId);
@@ -731,7 +925,7 @@ async function handleRequest(request, env, ctx) {
     if (url.pathname.startsWith('/grupos/') && request.method === 'GET') {
       const codigo = url.pathname.split('/')[2];
       const grupo = await env.DB.prepare(
-        "SELECT codigo, nombre, publico, creado, pin_acceso_hash FROM grupos WHERE codigo = ?"
+        "SELECT codigo, nombre, publico, creado, pin_acceso_hash, permitir_crear_temas, requiere_aprobacion FROM grupos WHERE codigo = ?"
       ).bind(codigo).first();
       if (!grupo) return Response.json({ error: 'No existe ese grupo.' }, { status: 404 });
       return Response.json({
@@ -739,7 +933,9 @@ async function handleRequest(request, env, ctx) {
         nombre: grupo.nombre,
         publico: grupo.publico,
         creado: grupo.creado,
-        tienePinAcceso: !!grupo.pin_acceso_hash
+        tienePinAcceso: !!grupo.pin_acceso_hash,
+        permitirCrearTemas: !!grupo.permitir_crear_temas,
+        requiereAprobacion: !!grupo.requiere_aprobacion
       });
     }
 
