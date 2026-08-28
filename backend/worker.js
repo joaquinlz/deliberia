@@ -207,10 +207,7 @@ async function chatearConTema(env, codigo, temaId, body) {
     "SELECT role, content FROM mensajes WHERE tema_id = ? AND participante_id = ? ORDER BY creado ASC"
   ).bind(temaId, participante.id).all();
 
-  const mensajesIA = [
-    { role: 'system', content: promptSistemaChat(tema, participante.nombre) },
-    ...previos.map(m => ({ role: m.role, content: m.content }))
-  ];
+  let systemContent = promptSistemaChat(tema, participante.nombre);
 
   if (body.herramienta === 'ver_transcripcion_literal') {
     const { results: otras } = await env.DB.prepare(
@@ -233,8 +230,13 @@ async function chatearConTema(env, codigo, temaId, body) {
         transcript += m.content + '\n';
       }
     }
-    mensajesIA.push({ role: 'system', content: promptHerramientaOpiniones(transcript) });
+    systemContent += '\n\n' + promptHerramientaOpiniones(transcript);
   }
+
+  const mensajesIA = [
+    { role: 'system', content: systemContent },
+    ...previos.map(m => ({ role: m.role, content: m.content }))
+  ];
 
   if (mensaje) {
     mensajesIA.push({ role: 'user', content: mensaje });
