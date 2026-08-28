@@ -42,6 +42,20 @@
 // GET  /grupos/:codigo/panorama → devuelve el panorama del grupo ya guardado (o null si no hay).
 // GET  /grupos-publicos → lista los grupos públicos, con cantidad de temas, participaciones y
 //                                  última actividad (para el directorio).
+// POST /soporte/mensajes → manda un mensaje al chat anónimo de consultas y sugerencias
+//                                  ({sesionId, mensaje}) — no pide ni guarda ningún nombre.
+// POST /soporte/sintesis → genera (o regenera) la síntesis de TODAS las conversaciones de
+//                                  soporte recibidas hasta ahora (preguntas frecuentes,
+//                                  sugerencias, problemas reportados) y la guarda.
+// GET  /soporte/sintesis → devuelve esa síntesis ya guardada (o null si no hay).
+// POST /admin/verificar-pin → compara un PIN contra el hash de administración guardado; si
+//                                  todavía no hay ninguno configurado, el primer PIN que llega
+//                                  queda guardado como tal (mismo criterio que el PIN de un grupo).
+// GET  /admin/monitoreo  → estadísticas globales de la app (grupos, temas, participaciones,
+//                                  encuestas, votos, consultas de soporte) vía SQL, sin iterar
+//                                  nada del lado del cliente.
+// POST /admin/grupos/:codigo/eliminar → borra un grupo por código sin necesitar su PIN — pide
+//                                  el PIN de administración en el body ({adminPin}) en su lugar.
 // GET  /test-crear-grupo         → atajo para probar la creación de un grupo desde el navegador.
 // GET  /test-verificar-pin       → atajo para probar la verificación de PIN desde el navegador
 //                                  (ej: /test-verificar-pin?codigo=grupo-de-prueba&pin=1234).
@@ -751,11 +765,7 @@ async function actualizarPinAcceso(env, codigo, body) {
   return { tienePinAcceso: !!hash };
 }
 
-async function eliminarGrupo(env, codigo, body) {
-  const check = await verificarPin(env, codigo, body.pin);
-  if (check.error) return check;
-  if (!check.correcto) return { error: 'PIN incorrecto.' };
-
+async function cascadeEliminarGrupo(env, codigo) {
   const { results: temas } = await env.DB.prepare("SELECT id FROM temas WHERE grupo_codigo = ?").bind(codigo).all();
   for (const t of temas) {
     await env.DB.prepare("DELETE FROM mensajes WHERE tema_id = ?").bind(t.id).run();
@@ -766,7 +776,205 @@ async function eliminarGrupo(env, codigo, body) {
   await env.DB.prepare("DELETE FROM temas WHERE grupo_codigo = ?").bind(codigo).run();
   await env.DB.prepare("DELETE FROM participantes WHERE grupo_codigo = ?").bind(codigo).run();
   await env.DB.prepare("DELETE FROM grupos WHERE codigo = ?").bind(codigo).run();
+}
+
+async function eliminarGrupo(env, codigo, body) {
+  const check = await verificarPin(env, codigo, body.pin);
+  if (check.error) return check;
+  if (!check.correcto) return { error: 'PIN incorrecto.' };
+  await cascadeEliminarGrupo(env, codigo);
   return { ok: true };
+}
+
+async function verificarPinAdmin(env, pin) {
+  const row = await env.DB.prepare("SELECT pin_hash FROM admin WHERE id = 1").first();
+  if (!row) {
+    const hash = await hashPin(pin || '');
+    await env.DB.prepare("INSERT INTO admin (id, pin_hash) VALUES (1, ?)").bind(hash).run();
+    return { correcto: true, nuevo: true };
+  }
+  const hash = await hashPin(pin || '');
+  return { correcto: hash === row.pin_hash, nuevo: false };
+}
+
+async function eliminarGrupoAdmin(env, codigo, adminPin) {
+  const check = await verificarPinAdmin(env, adminPin);
+  if (!check.correcto) return { error: 'PIN de administración incorrecto.' };
+  const grupo = await env.DB.prepare("SELECT codigo FROM grupos WHERE codigo = ?").bind(codigo).first();
+  if (!grupo) return { error: 'No existe ese grupo.' };
+  await cascadeEliminarGrupo(env, codigo);
+  return { ok: true };
+}
+
+async function obtenerMonitoreoAdmin(env) {
+  const totales = await env.DB.prepare(
+    `SELECT
+       (SELECT COUNT(*) FROM grupos) AS totalGrupos,
+       (SELECT COUNT(*) FROM grupos WHERE publico = 1) AS totalGruposPublicos,
+       (SELECT COUNT(*) FROM temas) AS totalTemas,
+       (SELECT COUNT(*) FROM (SELECT DISTINCT tema_id, participante_id FROM mensajes)) AS totalParticipaciones,
+       (SELECT COUNT(*) FROM temas WHERE encuesta_pregunta IS NOT NULL) AS totalEncuestas,
+       (SELECT COUNT(*) FROM votos) AS totalVotos,
+       (SELECT COUNT(*) FROM soporte_sesiones) AS totalConsultasSoporte`
+  ).first();
+
+  const grupoMasActivo = await env.DB.prepare(
+    `SELECT g.nombre, COUNT(DISTINCT m.tema_id || ':' || m.participante_id) AS participaciones
+     FROM grupos g JOIN temas t ON t.grupo_codigo = g.codigo JOIN mensajes m ON m.tema_id = t.id
+     GROUP BY g.codigo ORDER BY participaciones DESC LIMIT 1`
+  ).first();
+
+  const temaMasActivo = await env.DB.prepare(
+    `SELECT t.titulo AS nombre, g.nombre AS grupoNombre, COUNT(DISTINCT m.participante_id) AS participaciones
+     FROM temas t JOIN grupos g ON g.codigo = t.grupo_codigo JOIN mensajes m ON m.tema_id = t.id
+     GROUP BY t.id ORDER BY participaciones DESC LIMIT 1`
+  ).first();
+
+  const { results: todosLosGrupos } = await env.DB.prepare(
+    `SELECT g.codigo, g.nombre, g.publico, g.creado,
+            COUNT(DISTINCT t.id) AS cantidadTemas,
+            MAX(t.ultima_actividad) AS ultimaActividad,
+            COUNT(DISTINCT p.id) AS participaciones
+     FROM grupos g
+     LEFT JOIN temas t ON t.grupo_codigo = g.codigo
+     LEFT JOIN participantes p ON p.grupo_codigo = g.codigo
+     GROUP BY g.codigo
+     ORDER BY g.creado DESC`
+  ).all();
+
+  return {
+    totalGrupos: totales.totalGrupos,
+    totalGruposPublicos: totales.totalGruposPublicos,
+    totalGruposPrivados: totales.totalGrupos - totales.totalGruposPublicos,
+    totalTemas: totales.totalTemas,
+    totalParticipaciones: totales.totalParticipaciones,
+    totalEncuestas: totales.totalEncuestas,
+    totalVotos: totales.totalVotos,
+    totalConsultasSoporte: totales.totalConsultasSoporte,
+    grupoMasActivo: grupoMasActivo || null,
+    temaMasActivo: temaMasActivo || null,
+    todosLosGrupos: todosLosGrupos.map(g => ({ ...g, publico: !!g.publico }))
+  };
+}
+
+function promptSistemaSoporte() {
+  return `IDIOMA — esto es lo más importante a respetar en cada respuesta: respondé siempre en el idioma en que te escriban. Tu primer mensaje (antes de que la persona haya escrito algo) tiene que ser en ESPAÑOL — ni una palabra en otro idioma.
+
+Sos el asistente de soporte y sugerencias de DeliberIA. Tu tarea es responder dudas de cualquier persona sobre cómo funciona la herramienta, y también recibir sugerencias, críticas o comentarios generales con calidez, dejando que la persona se explaye sin necesidad de resolver nada vos mismo/a — un comentario o queja no necesita "solución" en el momento, alcanza con que quede registrado para quien administra la herramienta. Esta charla es anónima: no pidas ni uses ningún nombre. Sé breve, cordial y directo, con intervenciones de 2 a 4 oraciones.
+
+Para tu primer mensaje (el de apertura): en una oración corta, saludá y contale a la persona que este es el espacio de consultas y sugerencias de DeliberIA, e invitala a preguntar lo que quiera sobre cómo funciona la herramienta, o a dejar cualquier sugerencia o comentario.
+
+Sé siempre honesto acerca de lo que sabés y no sabés. Si te preguntan algo sobre la app que sí conocés, respondé directo. Si te preguntan algo que no sabés con certeza, decilo con claridad en vez de inventar una respuesta que suene bien — este proyecto es de código abierto, no hay nada que disimular sobre cómo funciona ni sobre sus límites.
+
+Contexto sobre cómo funciona DeliberIA: es una herramienta de deliberación colectiva asistida por IA. Cualquier persona u organización puede crear su propio grupo, con su propio link (un código único al final), su propio PIN de moderador/a, y opcionalmente un PIN de acceso para participantes. Esta versión todavía no tiene una forma segura de recuperar un PIN olvidado — hay que guardarlo bien apenas se crea el grupo, porque queda visible en pantalla en ese momento.
+
+Dentro de un grupo, el moderador crea "temas" con un título y una descripción; puede fijarlos, pausarlos, terminarlos, editarlos o eliminarlos, y puede permitir que los participantes propongan temas ellos mismos, con o sin aprobación previa. Cada participante elige su nombre una sola vez por grupo y conversa en privado con una IA sobre cada tema, con sus propias palabras — la IA no opina ni influye, solo ayuda a pensar en voz alta. Abajo del cuadro de texto del chat hay dos botones que se pueden activar antes de mandar un mensaje: "Búsqueda web" (para que la IA busque en internet) y "Opiniones de este tema" (para que la IA lea el texto completo de las conversaciones de otros participantes sobre ese mismo tema) — pero no hay acceso a lo que se habló en otros temas del grupo desde ahí.
+
+Las conversaciones de un tema arman una "síntesis" (resumen, consensos, matices, propuestas con nombre de quién las dijo, y a veces un plan de acción o un cuadro comparativo de posturas), consultable por cualquiera sin ser moderador, en una vista aparte del chat. Cruzando las síntesis de todos los temas de un grupo se arma un "panorama del grupo", también consultable por cualquiera. Los temas pueden tener una encuesta opcional. Un grupo puede ser público (aparece en un directorio buscable, con buscador y orden) o privado (solo con el link). Las síntesis se pueden descargar en Word. DeliberIA es de código abierto y fue construida junto con Claude, de Anthropic — aunque las conversaciones dentro de la herramienta las procesa un modelo de IA corriendo en la infraestructura de Cloudflare, no Claude directamente; esa pieza está pensada para poder cambiarse con el tiempo. Si te preguntan qué modelo exacto es o cuántos tokens de contexto soporta, no inventes un número: decí que no tenés ese dato preciso a mano. El margen de respuesta de una síntesis se ajusta automáticamente según cuánto texto haya que sintetizar; si preguntan cuánto tarda, decí que depende de eso y de la carga del momento, sin prometer un tiempo exacto.`;
+}
+
+async function chatearSoporte(env, body) {
+  const sesionId = (body.sesionId || '').trim();
+  if (!sesionId) return { error: 'Falta el identificador de sesión.' };
+
+  const yaExiste = await env.DB.prepare("SELECT id FROM soporte_sesiones WHERE id = ?").bind(sesionId).first();
+  if (!yaExiste) {
+    await env.DB.prepare("INSERT INTO soporte_sesiones (id, creado) VALUES (?, ?)").bind(sesionId, Date.now()).run();
+  }
+
+  const { results: previos } = await env.DB.prepare(
+    "SELECT role, content FROM soporte_mensajes WHERE sesion_id = ? ORDER BY creado ASC"
+  ).bind(sesionId).all();
+
+  const mensajesIA = [
+    { role: 'system', content: promptSistemaSoporte() },
+    ...previos.map(m => ({ role: m.role, content: m.content }))
+  ];
+
+  const mensaje = (body.mensaje || '').trim();
+  if (mensaje) {
+    mensajesIA.push({ role: 'user', content: mensaje });
+    await env.DB.prepare(
+      "INSERT INTO soporte_mensajes (sesion_id, role, content, creado) VALUES (?, 'user', ?, ?)"
+    ).bind(sesionId, mensaje, Date.now()).run();
+  } else if (previos.length === 0) {
+    mensajesIA.push({ role: 'user', content: 'Hola' });
+  }
+
+  let texto;
+  try {
+    const respuestaIA = await env.AI.run('@cf/qwen/qwen3.8-27b', { messages: mensajesIA });
+    texto = extraerTextoIA(respuestaIA);
+    if (!texto) throw new Error('respuesta vacía');
+  } catch (e) {
+    return { error: 'No se pudo generar la respuesta de la IA. Probá de nuevo.' };
+  }
+
+  await env.DB.prepare(
+    "INSERT INTO soporte_mensajes (sesion_id, role, content, creado) VALUES (?, 'assistant', ?, ?)"
+  ).bind(sesionId, texto, Date.now()).run();
+
+  return { respuesta: texto };
+}
+
+function promptSistemaSintesisSoporte() {
+  return `Sos un asistente que resume conversaciones anónimas de soporte y sugerencias recibidas por DeliberIA. Identificá, mirando el conjunto de conversaciones: un resumen general, las preguntas o dudas más frecuentes, las sugerencias destacadas, y los problemas o quejas reportados. Sé fiel a lo que efectivamente se dijo, sin inventar nada.
+
+Respondé ÚNICAMENTE con un objeto JSON válido, sin texto adicional, sin markdown, con esta forma exacta:
+{"resumen":"...", "preguntas_frecuentes":["..."], "sugerencias":["..."], "problemas_reportados":["..."]}`;
+}
+
+async function generarSintesisSoporteStreaming(env, ctx) {
+  const { results: mensajes } = await env.DB.prepare(
+    `SELECT sm.role, sm.content, sm.sesion_id
+     FROM soporte_mensajes sm ORDER BY sm.sesion_id, sm.creado ASC`
+  ).all();
+
+  if (mensajes.length === 0) return respuestaJson({ error: 'Todavía no hay consultas de soporte.' }, 400);
+
+  let transcript = '';
+  let sesionActual = null;
+  for (const m of mensajes) {
+    if (m.sesion_id !== sesionActual) {
+      transcript += `\n\n--- Conversación ---\n`;
+      sesionActual = m.sesion_id;
+    }
+    transcript += (m.role === 'user' ? 'Visitante' : 'IA') + ': ' + m.content + '\n';
+  }
+
+  let stream;
+  try {
+    stream = await env.AI.run('@cf/qwen/qwen3.8-27b', {
+      messages: [
+        { role: 'system', content: promptSistemaSintesisSoporte() },
+        { role: 'user', content: 'Conversaciones de soporte a analizar:' + transcript }
+      ],
+      stream: true
+    });
+  } catch (e) {
+    return respuestaJson({ error: 'No se pudo generar la síntesis de soporte. Probá de nuevo.' }, 400);
+  }
+
+  const [paraElNavegador, paraGuardar] = stream.tee();
+
+  ctx.waitUntil((async () => {
+    try {
+      const texto = await acumularStreamIA(paraGuardar);
+      const parsed = JSON.parse(texto.replace(/```json|```/g, '').trim());
+      await env.DB.prepare(
+        `INSERT INTO soporte_sintesis (id, contenido, lang, creado) VALUES (1, ?, 'es', ?)
+         ON CONFLICT(id) DO UPDATE SET contenido = excluded.contenido, creado = excluded.creado`
+      ).bind(JSON.stringify(parsed), Date.now()).run();
+    } catch (e) {}
+  })());
+
+  return new Response(paraElNavegador, { headers: { 'content-type': 'text/event-stream' } });
+}
+
+async function obtenerSintesisSoporte(env) {
+  const row = await env.DB.prepare("SELECT contenido, creado FROM soporte_sintesis WHERE id = 1").first();
+  if (!row) return null;
+  return { ...JSON.parse(row.contenido), creado: row.creado };
 }
 
 function corsHeaders() {
@@ -1044,6 +1252,44 @@ async function handleRequest(request, env, ctx) {
     if (url.pathname === '/test-panorama-grupo') {
       const codigo = url.searchParams.get('codigo') || '';
       return await generarPanoramaGrupoStreaming(env, ctx, codigo);
+    }
+
+    if (url.pathname === '/soporte/mensajes' && request.method === 'POST') {
+      const body = await request.json();
+      const resultado = await chatearSoporte(env, body);
+      if (resultado.error) return Response.json(resultado, { status: 400 });
+      return Response.json(resultado);
+    }
+
+    if (url.pathname === '/soporte/sintesis' && request.method === 'POST') {
+      return await generarSintesisSoporteStreaming(env, ctx);
+    }
+
+    if (url.pathname === '/soporte/sintesis' && request.method === 'GET') {
+      const resultado = await obtenerSintesisSoporte(env);
+      return Response.json(resultado);
+    }
+
+    if (url.pathname === '/admin/verificar-pin' && request.method === 'POST') {
+      const body = await request.json();
+      const resultado = await verificarPinAdmin(env, body.pin);
+      return Response.json(resultado);
+    }
+
+    if (url.pathname === '/admin/monitoreo' && request.method === 'GET') {
+      const resultado = await obtenerMonitoreoAdmin(env);
+      return Response.json(resultado);
+    }
+
+    {
+      const partesAdmin = url.pathname.split('/').filter(Boolean);
+      if (partesAdmin.length === 4 && partesAdmin[0] === 'admin' && partesAdmin[1] === 'grupos' && partesAdmin[3] === 'eliminar' && request.method === 'POST') {
+        const codigo = partesAdmin[2];
+        const body = await request.json();
+        const resultado = await eliminarGrupoAdmin(env, codigo, body.adminPin);
+        if (resultado.error) return Response.json(resultado, { status: 400 });
+        return Response.json(resultado);
+      }
     }
 
     return new Response('DeliberIA backend — probá /test-db, /test-ai, /test-crear-grupo, /test-verificar-pin, /test-crear-tema, /test-crear-tema-encuesta, /test-crear-participante, /test-chat, /test-sintesis, /test-votar, /test-panorama-grupo, /grupos-publicos, /grupos/<codigo>, o /grupos/<codigo>/temas');

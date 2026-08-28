@@ -280,8 +280,6 @@ const I18N = {
   monitoreoSinDatos: { es:'Todavía no calculaste el uso actual. Puede tardar unos segundos.', en:'You haven\'t calculated current usage yet. It may take a few seconds.' },
   monitoreoGrupos: { es:'grupos creados', en:'groups created' },
   monitoreoTemas: { es:'temas en total', en:'topics in total' },
-  monitoreoUso: { es:'Uso estimado de almacenamiento:', en:'Estimated storage usage:' },
-  monitoreoAclaracion: { es:'Es una estimación (no incluye datos personales de cada usuario, como su nombre guardado, que son privados). El límite de 20 MB es compartido por todos los grupos de este artifact.', en:'This is an estimate (it does not include each user\'s personal data, like their saved name, which is private). The 20 MB limit is shared across all groups in this artifact.' },
   monitoreoParticipaciones: { es:'participaciones', en:'participations' },
   monitoreoPublicos: { es:'grupos públicos', en:'public groups' },
   monitoreoPrivados: { es:'grupos privados', en:'private groups' },
@@ -290,7 +288,6 @@ const I18N = {
   monitoreoConsultasSoporte: { es:'consultas de soporte', en:'support inquiries' },
   monitoreoGrupoMasActivo: { es:'Grupo más activo:', en:'Most active group:' },
   monitoreoTemaMasActivo: { es:'Tema más activo:', en:'Most active topic:' },
-  monitoreoTopGrupos: { es:'Grupos que más espacio ocupan:', en:'Groups using the most space:' },
   modGruposTitulo: { es:'Moderación de grupos', en:'Group moderation' },
   modGruposSub: { es:'Herramienta de emergencia contra spam o ataques — no para uso rutinario. Muestra todos los grupos creados (públicos y privados) para poder detectar y eliminar spam o inactividad sospechosa cuando haga falta.', en:'Emergency tool against spam or attacks — not for routine use. Shows every group created (public and private) so you can detect and delete spam or suspicious inactivity when needed.' },
   modGruposCargarTodos: { es:'Cargar grupos creados', en:'Load created groups' },
@@ -380,11 +377,6 @@ const I18N = {
   creadoPinAccesoLabel: { es:'PIN de acceso para participantes', en:'Access PIN for participants' },
   creadoNota: { es:'Por seguridad, no vamos a poder mostrarte estos PIN de nuevo — guardalos ahora.', en:'For security reasons, we won\'t be able to show you these PINs again — save them now.' },
   creadoEntrar: { es:'Entrar a mi grupo →', en:'Enter my group →' },
-
-  // Unirse a un espacio
-  unirseEyebrow: { es:'Ingresar', en:'Enter' },
-  unirseTitulo: { es:'Unite a un grupo', en:'Join a group' },
-  unirseCodigoLabel: { es:'Código del grupo', en:'Group code' },
 
   // Acceso con PIN
   accesoEyebrow: { es:'Acceso restringido', en:'Restricted access' },
@@ -574,10 +566,8 @@ const I18N = {
   // Panel de administración de soporte
   soporteAdminPinEyebrow: { es:'Panel de administración', en:'Admin panel' },
   soporteAdminPinTitulo: { es:'PIN de administrador/a', en:'Admin PIN' },
-  soporteAdminPinTituloNuevo: { es:'Configurá tu PIN de administrador/a', en:'Set up your admin PIN' },
-  soporteAdminPinSubNuevo: { es:'Todavía nadie configuró un PIN para este panel. Como estás entrando primero, definilo ahora — es el único que va a funcionar de acá en más, guardalo bien.', en:'No one has set up a PIN for this panel yet. Since you\'re the first one here, set it now — it\'s the only one that will work from now on, so keep it safe.' },
+  soporteAdminPinSubNuevo: { es:'Si todavía nadie configuró un PIN para este panel, el que ingreses ahora va a quedar guardado como el único que funciona de acá en más — guardalo bien.', en:'If no one has set up a PIN for this panel yet, whatever you enter now will be saved as the only one that works from here on — keep it safe.' },
   soporteAdminPinLabel: { es:'PIN', en:'PIN' },
-  soporteAdminPinConfigurar: { es:'Configurar y entrar', en:'Set up and enter' },
   soporteAdminTitulo: { es:'Consultas y sugerencias recibidas', en:'Questions and suggestions received' },
   soporteAdminGenerarSintesis: { es:'Generar / actualizar síntesis', en:'Generate / update summary' },
   soporteAdminSinConsultas: { es:'Todavía no hay consultas suficientes para armar una síntesis.', en:'There aren\'t enough questions yet to build a summary.' },
@@ -944,14 +934,6 @@ async function storageList(prefix, shared){
 }
 async function storageDelete(key, shared){ return rawStorageDelete(wsPrefix() + key, shared); }
 
-async function otroGrupoGet(codigo, key, shared){ return rawStorageGet('ws:' + codigo + ':' + key, shared); }
-async function otroGrupoSet(codigo, key, value, shared){ return rawStorageSet('ws:' + codigo + ':' + key, value, shared); }
-async function otroGrupoList(codigo, prefix, shared){
-  const keys = await rawStorageList('ws:' + codigo + ':' + prefix, shared);
-  const p = 'ws:' + codigo + ':';
-  return keys.map(k => k.startsWith(p) ? k.slice(p.length) : k);
-}
-
 async function traducirObjetoSintesis(obj, idiomaDestino){
   const idiomaTexto = idiomaDestino === 'en' ? 'English' : 'Spanish';
   const { _lang, traducciones, ...contenido } = obj;
@@ -1030,100 +1012,6 @@ async function asegurarTraduccionesTemas(temas){
   }
 }
 
-async function calcularMonitoreoApp(){
-  const wsKeys = await rawStorageList('wsmeta:', true);
-  let totalGrupos = wsKeys.length;
-  let totalGruposPublicos = 0;
-  let totalTemas = 0;
-  let totalParticipaciones = 0;
-  let totalEncuestas = 0;
-  let totalVotos = 0;
-  let totalBytes = 0;
-  let grupoMasActivo = null;
-  let temaMasActivo = null;
-  const gruposPorTamano = [];
-  const todosLosGrupos = [];
-
-  for(const k of wsKeys){
-    const metaR = await rawStorageGet(k, true);
-    const codigo = k.slice('wsmeta:'.length);
-    let nombreGrupo = codigo;
-    let grupoBytes = 0;
-    let publicoFlag = false;
-    let creadoGrupo = null;
-    if(metaR){
-      grupoBytes += k.length + metaR.value.length;
-      try{
-        const meta = JSON.parse(metaR.value);
-        if(meta.publico) totalGruposPublicos++;
-        if(meta.nombre) nombreGrupo = meta.nombre;
-        publicoFlag = !!meta.publico;
-        creadoGrupo = meta.creado || null;
-      }catch(e){}
-    }
-    const temasR = await otroGrupoGet(codigo, 'config:temas', true);
-    let temas = [];
-    if(temasR){ try{ temas = JSON.parse(temasR.value); totalTemas += temas.length; }catch(e){} }
-    temas.forEach(t => { if(t.encuesta) totalEncuestas++; });
-    const temaConteo = {};
-    temas.forEach(t => { temaConteo[t.id] = 0; });
-
-    const claves = await otroGrupoList(codigo, '', true);
-    let participacionesGrupo = 0;
-    for(const kk of claves){
-      const r = await otroGrupoGet(codigo, kk, true);
-      if(!r) continue;
-      grupoBytes += kk.length + r.value.length;
-      if(kk.startsWith('conversacion:')){
-        participacionesGrupo++;
-        const temaId = kk.split(':')[1];
-        if(temaConteo[temaId] !== undefined) temaConteo[temaId]++;
-      } else if(kk.startsWith('voto:')){
-        totalVotos++;
-      }
-    }
-    totalParticipaciones += participacionesGrupo;
-    totalBytes += grupoBytes;
-    gruposPorTamano.push({ nombre: nombreGrupo, bytes: grupoBytes });
-
-    let ultimaActividadGrupo = 0;
-    temas.forEach(t => { if(t.ultimaActividad && t.ultimaActividad > ultimaActividadGrupo) ultimaActividadGrupo = t.ultimaActividad; });
-    todosLosGrupos.push({
-      codigo, nombre: nombreGrupo, publico: publicoFlag, creado: creadoGrupo,
-      cantidadTemas: temas.length, participaciones: participacionesGrupo, ultimaActividad: ultimaActividadGrupo
-    });
-
-    if(!grupoMasActivo || participacionesGrupo > grupoMasActivo.participaciones){
-      grupoMasActivo = { nombre: nombreGrupo, participaciones: participacionesGrupo };
-    }
-    for(const t of temas){
-      const c = temaConteo[t.id] || 0;
-      if(!temaMasActivo || c > temaMasActivo.participaciones){
-        temaMasActivo = { nombre: t.titulo, grupoNombre: nombreGrupo, participaciones: c };
-      }
-    }
-  }
-
-  const soporteKeys = await rawStorageList('soporte:', true);
-  let totalConsultasSoporte = 0;
-  for(const k of soporteKeys){
-    const r = await rawStorageGet(k, true);
-    if(r) totalBytes += k.length + r.value.length;
-    if(k.startsWith('soporte:conversacion:')) totalConsultasSoporte++;
-  }
-
-  gruposPorTamano.sort((a,b) => b.bytes - a.bytes);
-
-  return {
-    totalGrupos, totalGruposPublicos, totalGruposPrivados: totalGrupos - totalGruposPublicos,
-    totalTemas, totalParticipaciones, totalEncuestas, totalVotos, totalConsultasSoporte,
-    totalBytesEstimados: totalBytes,
-    grupoMasActivo, temaMasActivo,
-    topGrupos: gruposPorTamano.slice(0, 3),
-    todosLosGrupos
-  };
-}
-
 async function listarGruposPublicos(){
   const r = await apiGet('/grupos-publicos');
   return Array.isArray(r) ? r : [];
@@ -1189,7 +1077,6 @@ function render(){
   if(state.view === 'crear-espacio') return renderCrearEspacio();
   if(state.view === 'directorio-grupos') return renderDirectorioGrupos();
   if(state.view === 'panorama-grupo-publico') return renderPanoramaGrupoPublico();
-  if(state.view === 'unirse-espacio') return renderUnirseEspacio();
   if(state.view === 'espacio-creado') return renderEspacioCreado();
   if(state.view === 'role') return renderRole();
   if(state.view === 'p-acceso-pin') return renderAccesoPin();
@@ -1214,66 +1101,6 @@ function render(){
 const LINK_MERCADOPAGO = 'https://link.mercadopago.com.ar/joaquinlocati';
 const LINK_PAYPAL = 'https://paypal.me/joaquinlocati';
 
-function acercaDeResumen(){
-  if(state.lang === 'en'){
-    return `DeliberIA is an AI-assisted collective deliberation tool. Anyone or any organization can create their own group, with its own link (a unique code at the end), its own moderator PIN chosen by whoever creates it, and optionally an access PIN for participants. If the creator forgets their PIN, they can recover it from the same Claude account they used to create the group, with no extra codes needed.
-
-Within a group, the moderator creates "topics" (questions or issues to deliberate) with a title and a description that guides the AI; they can pin them to the top of the list, pause them, end them, edit them, or delete them, and can also allow participants to propose topics themselves, with or without prior approval. The topic list can be searched by text and sorted by recent activity, creation date, or number of participants.
-
-Each participant chooses their name once per group (it can't repeat another person's name in the same group) and talks privately with an AI about each topic, in their own words — the AI doesn't share opinions or influence anyone, it just helps think out loud and organize ideas. That AI can search the web if asked, and can also read the full text (unsummarized) of that same topic's conversations if asked what other participants said or for a literal quote — but it doesn't have access to what was discussed in other topics in the group; that can only be checked by entering each topic separately. It always replies in the language it's written to.
-
-A topic's conversations are cross-referenced to build a "synthesis": summary, points of consensus, nuances/disagreements, proposals (with the name of whoever said them, transparently, as in an in-person assembly), and when it applies, an action plan with steps or a comparison table of opposing positions. Any participant can ask to "see the group's panorama" in the middle of their chat to learn about and dig into what others said, even asking for translations. Anyone (whether they participated or not) can check that synthesis from the topic's public record, without being a moderator.
-
-Topics can have an optional poll (one or several choices, not rigid — you can change your vote anytime).
-
-A group can be public (it shows up in a searchable directory on the main screen, with search and sorting, where anyone can see a second-level panorama —a synthesis that cross-references the syntheses of all the group's topics— and join) or private (link-only, by default).
-
-Syntheses, for a single topic or for a whole group, can be downloaded as Word files. DeliberIA is open source (the full code can be downloaded from "About") and was built together with Claude, by Anthropic. The underlying idea is to expand democratic participation and collective listening, not replace it, steering away from hate speech and misinformation.
-
-About technical capacity: the app uses Claude Sonnet 4.6, which can read up to 1,000,000 tokens of context in a single synthesis (roughly 1,500 pages of text) — a group with 100 participants writing 2 pages each uses barely 10-14% of that capacity, so reading isn't a practical limit. The response budget (how long a synthesis can run) adjusts automatically based on how much text there is to synthesize, between 1,000 and 4,000 tokens (roughly 1 to 4 pages), so as not to cut large topics too short or stretch small ones too long. If someone asks how long it takes or how many people it supports, answer with this information in simple terms, clarifying that the exact response time isn't guaranteed and depends on current load.`;
-  }
-  return `DeliberIA es una herramienta de deliberación colectiva asistida por IA. Cualquier persona u organización puede crear su propio grupo, con su propio link (un código único pegado al final), su propio PIN de moderador/a elegido por quien lo crea, y opcionalmente un PIN de acceso para participantes. Si el creador olvida su PIN, puede recuperarlo desde la misma cuenta de Claude con la que creó el grupo, sin necesidad de códigos extra.
-
-Dentro de un grupo, el moderador crea "temas" (preguntas o cuestiones a deliberar) con un título y una descripción que guía a la IA; puede fijarlos arriba de la lista, pausarlos, terminarlos, editarlos o eliminarlos, y también puede permitir que los participantes propongan temas ellos mismos, con o sin aprobación previa. La lista de temas se puede buscar por texto y ordenar por actividad reciente, fecha de creación o cantidad de participantes.
-
-Cada participante elige su nombre una sola vez por grupo (no se puede repetir con el de otra persona en el mismo grupo) y conversa en privado con una IA sobre cada tema, con sus propias palabras — la IA no opina ni influye, solo ayuda a pensar en voz alta y ordenar ideas. Esa IA puede buscar en la web si se lo piden, y también puede leer el texto completo (sin resumir) de las conversaciones de ese mismo tema si le preguntan qué dijeron otros participantes o piden una cita textual — pero no tiene acceso a lo que se habló en otros temas distintos del grupo, eso solo se puede consultar entrando a cada tema por separado. Responde siempre en el idioma en que le escriban.
-
-Las conversaciones de un tema se cruzan para armar una "síntesis": resumen, consensos, matices/desacuerdos, propuestas (con nombre de quién las dijo, de forma transparente como en una asamblea presencial), y cuando corresponde, un plan de acción con pasos o un cuadro comparativo de posturas opuestas. Cualquier participante puede pedir "ver el panorama del grupo" en medio de su charla para conocer y profundizar sobre lo que dijeron los demás, incluso pidiendo traducciones. Cualquiera (participe o no) puede consultar esa síntesis desde el registro público del tema, sin ser moderador.
-
-Los temas pueden tener una encuesta opcional (una o varias opciones, no rígida: se puede cambiar el voto cuando quieras).
-
-Un grupo puede ser público (aparece en un directorio buscable en la pantalla principal, con buscador y orden, donde cualquiera puede ver un panorama de segundo nivel —una síntesis que cruza las síntesis de todos los temas del grupo— y sumarse) o privado (solo con el link, por defecto).
-
-Las síntesis, tanto de un tema como de un grupo entero, se pueden descargar en Word. DeliberIA es de código abierto (se puede descargar el código completo desde "Acerca de") y fue construido junto con Claude, de Anthropic. La idea de fondo es ampliar la participación democrática y la escucha colectiva, no reemplazarla, evitando el discurso de odio y la desinformación.
-
-Sobre la capacidad técnica: la app usa Claude Sonnet 4.6, que puede leer hasta 1.000.000 de tokens de contexto en una sola síntesis (aproximadamente 1.500 páginas de texto) — un grupo con 100 participantes escribiendo 2 páginas cada uno usa apenas un 10-14% de esa capacidad, así que la lectura no es un límite práctico. El margen de la respuesta (cuánto puede extenderse una síntesis) se ajusta automáticamente según la cantidad de texto a sintetizar, entre 1.000 y 4.000 tokens (de ~1 a ~4 páginas), para no acortar de más los temas grandes ni alargar de más los chicos. Si alguien pregunta cuánto tarda o cuántas personas soporta, respondé con esta información en términos simples, aclarando que el tiempo exacto de respuesta no está garantizado y depende de la carga del momento.`;
-}
-
-function soporteSystemPrompt(){
-  if(state.lang === 'en'){
-    return `LANGUAGE — this is the most important thing to respect in every reply: always reply in the language the person writes to you in. Your first message (before the person has written anything) has to be in ENGLISH — not a single word in another language —, because that's what's currently set in the interface; but if they later write in another language, switch to that.
-
-You're DeliberIA's support and suggestions assistant. Your job is to answer anyone's questions about how the tool works, and also to receive suggestions, critiques, or general comments warmly, letting the person express themselves without needing to solve anything yourself — a comment or complaint doesn't need a "solution" on the spot, it's enough that it gets recorded for whoever administers the tool. This chat is anonymous: don't ask for or use any name. Be brief, warm, and direct, with replies of 2 to 4 sentences.
-
-For your first message (the opener): in one short sentence, greet the person and tell them this is DeliberIA's questions and suggestions space, and invite them to ask whatever they want about how the tool works, or to leave any suggestion or comment.
-
-Always be honest about what you know and don't know. If you're asked something about the app that you do know, answer directly. If you're asked something you're not sure about, say so clearly instead of making up an answer that sounds good — this project is open source, there's nothing to hide about how it works or its limits.
-
-Context on how DeliberIA works:
-${acercaDeResumen()}`;
-  }
-  return `IDIOMA — esto es lo más importante a respetar en cada respuesta: respondé siempre en el idioma en que te escriban. Tu primer mensaje (antes de que la persona haya escrito algo) tiene que ser en ESPAÑOL — ni una palabra en otro idioma —, porque es el que tiene configurado ahora mismo en la interfaz; pero si después escribe en otro idioma, cambiá a ese.
-
-Sos el asistente de soporte y sugerencias de DeliberIA. Tu tarea es responder dudas de cualquier persona sobre cómo funciona la herramienta, y también recibir sugerencias, críticas o comentarios generales con calidez, dejando que la persona se explaye sin necesidad de resolver nada vos mismo/a — un comentario o queja no necesita "solución" en el momento, alcanza con que quede registrado para quien administra la herramienta. Esta charla es anónima: no pidas ni uses ningún nombre. Sé breve, cordial y directo, con intervenciones de 2 a 4 oraciones.
-
-Para tu primer mensaje (el de apertura): en una oración corta, saludá y contale a la persona que este es el espacio de consultas y sugerencias de DeliberIA, e invitala a preguntar lo que quiera sobre cómo funciona la herramienta, o a dejar cualquier sugerencia o comentario.
-
-Sé siempre honesto acerca de lo que sabés y no sabés. Si te preguntan algo sobre la app que sí conocés, respondé directo. Si te preguntan algo que no sabés con certeza, decilo con claridad en vez de inventar una respuesta que suene bien — este proyecto es de código abierto, no hay nada que disimular sobre cómo funciona ni sobre sus límites.
-
-Contexto sobre cómo funciona DeliberIA:
-${acercaDeResumen()}`;
-}
-
 async function sendToSoporte(userText){
   state.busy = true; state.error = '';
   if(!state.soporteMessages) state.soporteMessages = [];
@@ -1281,9 +1108,9 @@ async function sendToSoporte(userText){
   render();
   try{
     if(!state.soporteId) state.soporteId = uid();
-    const reply = await callClaude(state.soporteMessages.length ? state.soporteMessages : [{role:'user', content: state.lang === 'en' ? 'Hello' : 'Hola'}], soporteSystemPrompt());
-    state.soporteMessages.push({ role:'assistant', content: reply });
-    await rawStorageSet('soporte:conversacion:' + state.soporteId, JSON.stringify({ messages: state.soporteMessages, ts: Date.now() }), true);
+    const resultado = await apiPost('/soporte/mensajes', { sesionId: state.soporteId, mensaje: userText || '' });
+    if(resultado.error) throw new Error(resultado.error);
+    state.soporteMessages.push({ role:'assistant', content: resultado.respuesta });
   }catch(e){
     state.error = mensajeErrorIA(e);
   }
@@ -1328,20 +1155,18 @@ function renderSoporteChat(){
   document.getElementById('go-soporte-admin').onclick = () => { state.view = 'soporte-admin-pin'; render(); };
 }
 
-async function renderSoporteAdminPin(){
-  const existente = await rawStorageGet('soporte:admin-pin-hash', true);
-  const yaExiste = !!existente;
+function renderSoporteAdminPin(){
   app.innerHTML = `
     <a class="back" id="back">${tr('volver')}</a>
     <p class="eyebrow" style="margin-top:18px;">${tr('soporteAdminPinEyebrow')}</p>
-    <h1 style="font-size:26px;">${yaExiste ? tr('soporteAdminPinTitulo') : tr('soporteAdminPinTituloNuevo')}</h1>
-    ${!yaExiste ? `<p class="sub">${tr('soporteAdminPinSubNuevo')}</p>` : ''}
+    <h1 style="font-size:26px;">${tr('soporteAdminPinTitulo')}</h1>
+    <p class="sub">${tr('soporteAdminPinSubNuevo')}</p>
     <div class="card">
       <div class="field">
         <label for="sa-pin">${tr('soporteAdminPinLabel')}</label>
         <input type="text" id="sa-pin" placeholder="${tr('pinPlaceholder')}" maxlength="12" />
       </div>
-      <button class="btn btn-primary" id="sa-entrar">${yaExiste ? tr('entrar') : tr('soporteAdminPinConfigurar')}</button>
+      <button class="btn btn-primary" id="sa-entrar">${tr('entrar')}</button>
       <div class="err" id="sa-err"></div>
     </div>
   `;
@@ -1349,35 +1174,13 @@ async function renderSoporteAdminPin(){
   const submit = async () => {
     const v = document.getElementById('sa-pin').value.trim();
     if(!v){ document.getElementById('sa-err').textContent = tr('ingresarUnPin'); return; }
-    if(!yaExiste){
-      await rawStorageSet('soporte:admin-pin-hash', await hashPin(v), true);
-      state.view = 'soporte-admin'; render();
-      return;
-    }
-    if((await hashPin(v)) !== existente.value){ document.getElementById('sa-err').textContent = tr('pinIncorrecto'); return; }
+    const resultado = await apiPost('/admin/verificar-pin', { pin: v });
+    if(!resultado || !resultado.correcto){ document.getElementById('sa-err').textContent = tr('pinIncorrecto'); return; }
+    state.adminPin = v;
     state.view = 'soporte-admin'; render();
   };
   document.getElementById('sa-entrar').onclick = submit;
   document.getElementById('sa-pin').addEventListener('keydown', (e) => { if(e.key==='Enter') submit(); });
-}
-
-function soporteSintesisSystemPrompt(presupuestoCaracteres, notaReintento){
-  return `Sos un asistente que resume conversaciones anónimas de soporte y sugerencias recibidas por DeliberIA. Identificá, mirando el conjunto de conversaciones: un resumen general, las preguntas o dudas más frecuentes, las sugerencias destacadas, y los problemas o quejas reportados. Sé fiel a lo que efectivamente se dijo, sin inventar nada.
-
-IMPORTANTE — antes de escribir, planificá la extensión: tu respuesta completa (el JSON entero) no debe superar aproximadamente ${presupuestoCaracteres} caracteres en total. Leé primero todas las conversaciones enteras, y recién ahí armá el resumen teniendo en cuenta ese límite desde el principio. Si hay mucho contenido, priorizá calidad sobre exhaustividad: agrupá preguntas o sugerencias parecidas en un mismo punto en vez de listarlas todas por separado.
-
-Escribí toda tu respuesta (todos los campos del JSON) en ${state.lang === 'en' ? 'inglés' : 'español'}, que es el idioma que tiene configurada la interfaz de quien pidió esta síntesis — sin importar en qué idioma estén las conversaciones originales.
-${notaReintento ? '\n' + notaReintento + '\n' : ''}
-Respondé ÚNICAMENTE con un objeto JSON válido, sin texto adicional, sin markdown, con esta forma exacta:
-{"resumen":"...", "preguntas_frecuentes":["..."], "sugerencias":["..."], "problemas_reportados":["..."]}`;
-}
-
-async function eliminarGrupoCompleto(codigo){
-  const claves = await otroGrupoList(codigo, '', true);
-  for(const kk of claves){
-    await rawStorageDelete('ws:' + codigo + ':' + kk, true);
-  }
-  await rawStorageDelete('wsmeta:' + codigo, true);
 }
 
 function renderPreviaGrupoCodigo(p){
@@ -1425,43 +1228,6 @@ function renderPublicosAdminContenido(lista){
     </div>`).join('') + verMasHtml;
 }
 
-async function generarSintesisSoporte(barraId){
-  const keys = await rawStorageList('soporte:conversacion:', true);
-  let transcript = '';
-  for(const k of keys){
-    const r = await rawStorageGet(k, true);
-    if(!r) continue;
-    try{
-      const c = JSON.parse(r.value);
-      transcript += '\n\n--- Conversación ---\n' + c.messages.map(m => (m.role==='user'?'Visitante':'IA') + ': ' + m.content).join('\n');
-    }catch(e){}
-  }
-  if(!transcript) return null;
-  const maxTokens = calcularMaxTokensSintesis(transcript.length);
-  let presupuesto = Math.round(maxTokens * 4 * 0.7);
-  let notaReintento = null;
-  for(let intento = 1; intento <= 2; intento++){
-    try{
-      const raw = await callClaudeStreaming([{ role:'user', content: 'Conversaciones de soporte a analizar:' + transcript }], soporteSintesisSystemPrompt(presupuesto, notaReintento), maxTokens,
-        barraId ? (chars) => actualizarBarraProgreso(barraId, (chars / (maxTokens * 4)) * 100) : null);
-      const cleaned = raw.replace(/```json|```/g, '').trim();
-      const parsed = JSON.parse(cleaned);
-      if(barraId) ocultarBarraProgreso(barraId);
-      parsed._lang = state.lang;
-      await rawStorageSet('soporte:sintesis', JSON.stringify(parsed), true);
-      return parsed;
-    }catch(e){
-      if(((e && e.message) || '').startsWith('api_error_')){
-        if(barraId) ocultarBarraProgreso(barraId);
-        return mensajeErrorIA(e);
-      }
-      presupuesto = Math.round(presupuesto * 0.65);
-      notaReintento = 'AVISO: tu intento anterior para esta misma síntesis fue demasiado largo y no llegó a cerrar el JSON correctamente. Esta vez sé notablemente más breve y compacto.';
-    }
-  }
-  if(barraId) ocultarBarraProgreso(barraId);
-  return tr('errorGeneracion');
-}
 
 function renderSintesisSoporteContenido(s){
   if(!s) return `<p class="empty">${tr('soporteAdminSinSintesis')}</p>`;
@@ -1515,8 +1281,8 @@ function renderSoporteAdmin(){
         <input type="text" id="admin-codigo-borrar" placeholder="${tr('modGruposCodigoPlaceholder')}" maxlength="100" />
       </div>
       <button class="btn btn-ghost btn-sm" id="buscar-por-codigo" ${state.busy?'disabled':''}>${tr('modGruposBuscar')}</button>
-      <div class="err" id="admin-grupos-err"></div>
-      <div class="ok" id="admin-grupos-ok"></div>
+      <div class="err" id="admin-grupos-err">${esc(state.adminGruposErr || '')}</div>
+      <div class="ok" id="admin-grupos-ok">${esc(state.adminGruposOk || '')}</div>
       <div id="preview-codigo-area" style="margin-top:16px;">${renderPreviaGrupoCodigo(state.previaGrupoCodigo)}</div>
     </div>
 
@@ -1531,12 +1297,12 @@ function renderSoporteAdmin(){
   document.getElementById('back').onclick = () => { state.view='soporte-chat'; render(); };
   document.getElementById('calcular-monitoreo').onclick = async () => {
     state.busy = true; render();
-    state.monitoreoApp = await calcularMonitoreoApp();
+    state.monitoreoApp = await apiGet('/admin/monitoreo');
     state.busy = false; render();
   };
   document.getElementById('cargar-publicos').onclick = async () => {
     state.busy = true; render();
-    const m = await calcularMonitoreoApp();
+    const m = await apiGet('/admin/monitoreo');
     state.monitoreoApp = m;
     state.publicosAdmin = m.todosLosGrupos;
     state.mostrarPublicosAdminHasta = null;
@@ -1546,46 +1312,52 @@ function renderSoporteAdmin(){
   if(verMasPubAdminBtn) verMasPubAdminBtn.onclick = () => { state.mostrarPublicosAdminHasta = (state.mostrarPublicosAdminHasta || 20) + 20; render(); };
   document.getElementById('buscar-por-codigo').onclick = async () => {
     const codigo = document.getElementById('admin-codigo-borrar').value.trim();
-    const errEl = document.getElementById('admin-grupos-err');
-    const okEl = document.getElementById('admin-grupos-ok');
-    errEl.textContent = ''; okEl.textContent = ''; state.previaGrupoCodigo = null;
-    if(!codigo){ errEl.textContent = tr('modGruposFaltaCodigo'); render(); return; }
+    state.adminGruposErr = ''; state.adminGruposOk = ''; state.previaGrupoCodigo = null;
+    if(!codigo){ state.adminGruposErr = tr('modGruposFaltaCodigo'); render(); return; }
     state.busy = true; render();
-    const meta = await rawStorageGet('wsmeta:' + codigo, true);
-    if(!meta){
+    const meta = await apiGet('/grupos/' + encodeURIComponent(codigo));
+    if(!meta || meta.error){
       state.busy = false;
       state.previaGrupoCodigo = null;
+      state.adminGruposErr = tr('modGruposNoEncontrado');
       render();
-      document.getElementById('admin-grupos-err').textContent = tr('modGruposNoEncontrado');
       return;
     }
-    let metaObj = {}; try{ metaObj = JSON.parse(meta.value); }catch(e){}
-    const temasR = await otroGrupoGet(codigo, 'config:temas', true);
-    let temas = []; if(temasR){ try{ temas = JSON.parse(temasR.value); }catch(e){} }
-    state.previaGrupoCodigo = { codigo, nombre: metaObj.nombre || codigo, publico: !!metaObj.publico, creado: metaObj.creado, temas };
+    const temas = await apiGet('/grupos/' + encodeURIComponent(codigo) + '/temas?todos=1');
+    state.previaGrupoCodigo = { codigo, nombre: meta.nombre || codigo, publico: !!meta.publico, creado: meta.creado, temas: Array.isArray(temas) ? temas : [] };
     state.busy = false;
     render();
   };
   const confirmarBtn = document.getElementById('confirmar-borrado-previa');
   armarConfirmacionDobleToque(confirmarBtn, async () => {
-    await eliminarGrupoCompleto(state.previaGrupoCodigo.codigo);
+    const resultado = await apiPost('/admin/grupos/' + encodeURIComponent(state.previaGrupoCodigo.codigo) + '/eliminar', { adminPin: state.adminPin || '' });
+    if(!resultado || resultado.error){
+      state.adminGruposErr = (resultado && resultado.error) || tr('errorGeneracion');
+      render();
+      return;
+    }
     state.previaGrupoCodigo = null;
-    document.getElementById('admin-codigo-borrar').value = '';
-    document.getElementById('admin-grupos-ok').textContent = tr('modGruposBorradoOk');
+    state.adminGruposErr = '';
+    state.adminGruposOk = tr('modGruposBorradoOk');
     render();
+    const input = document.getElementById('admin-codigo-borrar');
+    if(input) input.value = '';
   });
   document.querySelectorAll('.borrar-publico-btn').forEach(b => {
     armarConfirmacionDobleToque(b, async () => {
-      await eliminarGrupoCompleto(b.dataset.codigo);
+      const resultado = await apiPost('/admin/grupos/' + encodeURIComponent(b.dataset.codigo) + '/eliminar', { adminPin: state.adminPin || '' });
+      if(!resultado || resultado.error) return;
       state.publicosAdmin = (state.publicosAdmin || []).filter(g => g.codigo !== b.dataset.codigo);
       render();
     });
   });
   document.getElementById('gen-soporte').onclick = async () => {
     state.busy = true; state.error=''; state.errorSoporteAdmin=''; render();
-    const s = await generarSintesisSoporte('progreso-soporte');
-    if(typeof s === 'string') state.errorSoporteAdmin = s;
-    else if(!s) state.errorSoporteAdmin = tr('soporteAdminSinConsultas');
+    const s = await streamPost('/soporte/sintesis', (chars) => {
+      actualizarBarraProgreso('progreso-soporte', (chars / 8000) * 100);
+    });
+    ocultarBarraProgreso('progreso-soporte');
+    if(s.error) state.errorSoporteAdmin = s.error === 'Todavía no hay consultas de soporte.' ? tr('soporteAdminSinConsultas') : tr('errorGeneracion');
     else state.sintesisSoporte = s;
     state.busy = false; render();
   };
@@ -1595,9 +1367,8 @@ function renderSoporteAdmin(){
     descargarWordBlob(html, 'consultas_y_sugerencias_deliberia.doc', null, 'soporte-err');
   };
   (async () => {
-    const r = await rawStorageGet('soporte:sintesis', true);
-    const rRaw = r ? JSON.parse(r.value) : null;
-    state.sintesisSoporte = await obtenerSintesisEnIdioma(rRaw, async (obj) => { await rawStorageSet('soporte:sintesis', JSON.stringify(obj), true); });
+    const rRaw = await apiGet('/soporte/sintesis');
+    state.sintesisSoporte = await obtenerSintesisEnIdioma((rRaw && !rRaw.error) ? rRaw : null, null);
     const area = document.getElementById('soporte-area');
     if(area) area.innerHTML = renderSintesisSoporteContenido(state.sintesisSoporte);
     const dlBtn = document.getElementById('download-soporte');
@@ -1607,21 +1378,12 @@ function renderSoporteAdmin(){
 
 function renderMonitoreoContenido(m){
   if(!m) return `<p class="empty">${tr('monitoreoSinDatos')}</p>`;
-  const mb = m.totalBytesEstimados / (1024*1024);
-  const pct = Math.min(100, (mb / 20) * 100);
-  const topGruposHtml = (m.topGrupos||[]).map(g => `<li>${esc(g.nombre)} — ${(g.bytes/(1024*1024)).toFixed(2)} MB</li>`).join('');
   return `
     <div class="stat-row">
       <div class="stat"><span class="n">${m.totalGrupos}</span><span class="l">${tr('monitoreoGrupos')}</span></div>
       <div class="stat"><span class="n">${m.totalTemas}</span><span class="l">${tr('monitoreoTemas')}</span></div>
       <div class="stat"><span class="n">${m.totalParticipaciones}</span><span class="l">${tr('monitoreoParticipaciones')}</span></div>
     </div>
-    <p class="footer-note" style="margin-bottom:6px;">${tr('monitoreoUso')} ${mb.toFixed(2)} MB / 20 MB (${pct.toFixed(1)}%)</p>
-    <div style="background:rgba(0,0,0,0.25); border-radius:20px; height:10px; overflow:hidden;">
-      <div style="width:${pct}%; height:100%; background: ${pct > 80 ? 'var(--danger)' : 'var(--gold)'};"></div>
-    </div>
-    <p class="footer-note" style="margin-top:10px;">${tr('monitoreoAclaracion')}</p>
-    <hr class="divider" />
     <div class="stat-row">
       <div class="stat"><span class="n">${m.totalGruposPublicos}</span><span class="l">${tr('monitoreoPublicos')}</span></div>
       <div class="stat"><span class="n">${m.totalGruposPrivados}</span><span class="l">${tr('monitoreoPrivados')}</span></div>
@@ -1633,7 +1395,6 @@ function renderMonitoreoContenido(m){
     </div>
     ${m.grupoMasActivo ? `<p class="footer-note">${tr('monitoreoGrupoMasActivo')} <b>${esc(m.grupoMasActivo.nombre)}</b> (${m.grupoMasActivo.participaciones} ${tr('monitoreoParticipaciones')})</p>` : ''}
     ${m.temaMasActivo ? `<p class="footer-note">${tr('monitoreoTemaMasActivo')} <b>${esc(m.temaMasActivo.nombre)}</b> — ${esc(m.temaMasActivo.grupoNombre)} (${m.temaMasActivo.participaciones} ${tr('monitoreoParticipaciones')})</p>` : ''}
-    ${topGruposHtml ? `<p class="footer-note" style="margin-top:10px; margin-bottom:4px;">${tr('monitoreoTopGrupos')}</p><ul style="margin:0; padding-left:20px; font-size:13px; color:var(--ink-dim);">${topGruposHtml}</ul>` : ''}
   `;
 }
 
@@ -1712,12 +1473,6 @@ function renderAcerca(){
       URL.revokeObjectURL(url);
     }catch(e){ alert(tr('acercaDescargarError')); }
   };
-}
-
-async function hashPin(pin){
-  const enc = new TextEncoder().encode(pin);
-  const buf = await crypto.subtle.digest('SHA-256', enc);
-  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2,'0')).join('');
 }
 
 async function agregarGrupoReciente(codigo, nombre){
@@ -2037,33 +1792,6 @@ function renderEspacioCreado(){
     <button class="btn btn-primary btn-cta" id="entrar-ahora">${tr('creadoEntrar')}</button>
   `;
   document.getElementById('entrar-ahora').onclick = () => { state.view = 'role'; render(); };
-}
-
-function renderUnirseEspacio(){
-  app.innerHTML = `
-    <a class="back" id="back">${tr('volver')}</a>
-    <p class="eyebrow" style="margin-top:18px;">${tr('unirseEyebrow')}</p>
-    <h1>${tr('unirseTitulo')}</h1>
-    <div class="card">
-      <div class="field">
-        <label for="ue-codigo">${tr('unirseCodigoLabel')}</label>
-        <input type="text" id="ue-codigo" placeholder="${tr('landCodigoPlaceholder')}" maxlength="100" />
-      </div>
-      <button class="btn btn-primary" id="ue-entrar">${tr('entrar')}</button>
-      <div class="err" id="ue-err"></div>
-    </div>
-  `;
-  document.getElementById('back').onclick = () => { state.view='landing'; render(); };
-  document.getElementById('ue-entrar').onclick = async () => {
-    const codigo = document.getElementById('ue-codigo').value.trim();
-    if(!codigo){ document.getElementById('ue-err').textContent = tr('landIngresaCodigo'); return; }
-    const meta = await rawStorageGet('wsmeta:' + codigo, true);
-    if(!meta){ document.getElementById('ue-err').textContent = tr('landNoEncontramos'); return; }
-    state.workspaceId = codigo;
-    state.workspaceMeta = JSON.parse(meta.value);
-    await agregarGrupoReciente(codigo, state.workspaceMeta.nombre);
-    state.view = 'role'; render();
-  };
 }
 
 function renderAccesoPin(){
