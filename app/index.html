@@ -2002,15 +2002,14 @@ async function generarPanoramaGrupo(codigo, nombreGrupo, barraId){
 }
 
 function formatPanoramaGrupoWordHtml(nombreGrupo, p){
-  const ejesHtml = (p.ejes_tematicos||[]).map(e=>`<li>${esc(e)}</li>`).join('');
-  const consensosHtml = (p.consensos_transversales||[]).map(e=>`<li>${esc(e)}</li>`).join('');
-  const destacadosHtml = (p.temas_destacados||[]).map(t=>`<li><b>${esc(t.titulo||'')}:</b> ${esc(t.porque||'')}</li>`).join('');
+  const ejesHtml = (p.ejes||[]).map(e=>`<li>${esc(e)}</li>`).join('');
+  const consensosHtml = (p.consensosTransversales||[]).map(e=>`<li>${esc(e)}</li>`).join('');
+  const destacadosHtml = (p.temasDestacados||[]).map(t=>`<li><b>${esc(t.titulo||'')}:</b> ${esc(t.descripcion||'')}</li>`).join('');
   const titPanorama = state.lang === 'en' ? 'Group panorama: ' : 'Panorama del grupo: ';
   return `<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
 <head><meta charset="utf-8"><title>${esc(nombreGrupo)}</title></head>
 <body style="font-family:Calibri,Arial,sans-serif; text-align:justify;">
 <h1 style="color:#1F3B57;">${titPanorama}${esc(nombreGrupo)}</h1>
-<h2 style="color:#9C7A3C;">${tr('resumen')}</h2><p>${esc(p.resumen || '')}</p>
 <h2 style="color:#9C7A3C;">${tr('pgEjesTematicos')}</h2><ul>${ejesHtml || `<li>${tr('sinDatos')}</li>`}</ul>
 <h2 style="color:#9C7A3C;">${tr('pgConsensosTransversales')}</h2><ul>${consensosHtml || `<li>${tr('sinDatos')}</li>`}</ul>
 <h2 style="color:#9C7A3C;">${tr('pgTemasDestacados')}</h2><ul>${destacadosHtml || `<li>${tr('sinDatos')}</li>`}</ul>
@@ -2040,9 +2039,8 @@ function renderPanoramaGrupoPublico(){
   };
   document.getElementById('gen-pg').onclick = async () => {
     state.busy = true; state.error=''; state.errorPanoramaGrupo=''; render();
-    const p = await generarPanoramaGrupo(g.codigo, g.nombre, 'progreso-pg');
-    if(typeof p === 'string') state.errorPanoramaGrupo = p;
-    else if(!p) state.errorPanoramaGrupo = tr('pgSinSintesis');
+    const p = await apiPost('/grupos/' + g.codigo + '/panorama');
+    if(p.error) state.errorPanoramaGrupo = p.error === 'Todavía no hay síntesis de temas suficientes para armar el panorama del grupo.' ? tr('pgSinSintesis') : p.error;
     else state.panoramaGrupoActual = p;
     state.busy = false; render();
   };
@@ -2053,20 +2051,18 @@ function renderPanoramaGrupoPublico(){
     descargarWordBlob(html, nombre, null, 'pg-err');
   };
   (async () => {
-    const r = await otroGrupoGet(g.codigo, 'panorama-grupo', true);
-    const rRaw = r ? JSON.parse(r.value) : null;
-    state.panoramaGrupoActual = await obtenerSintesisEnIdioma(rRaw, async (obj) => { await otroGrupoSet(g.codigo, 'panorama-grupo', JSON.stringify(obj), true); });
+    const p = await apiGet('/grupos/' + g.codigo + '/panorama');
+    state.panoramaGrupoActual = (p && !p.error) ? p : null;
     document.getElementById('pg-area').innerHTML = renderPanoramaGrupoContenido(state.panoramaGrupoActual);
   })();
 }
 
 function renderPanoramaGrupoContenido(p){
   if(!p) return `<p class="empty">${tr('pgSinPanorama')}</p>`;
-  const ejes = (p.ejes_tematicos||[]).map(e=>`<li>${esc(e)}</li>`).join('');
-  const consensos = (p.consensos_transversales||[]).map(e=>`<li>${esc(e)}</li>`).join('');
-  const destacados = (p.temas_destacados||[]).map(t=>`<div class="proposal"><div class="t">${esc(t.titulo||'')}</div><div>${esc(t.porque||'')}</div></div>`).join('');
+  const ejes = (p.ejes||[]).map(e=>`<li>${esc(e)}</li>`).join('');
+  const consensos = (p.consensosTransversales||[]).map(e=>`<li>${esc(e)}</li>`).join('');
+  const destacados = (p.temasDestacados||[]).map(t=>`<div class="proposal"><div class="t">${esc(t.titulo||'')}</div><div>${esc(t.descripcion||'')}</div></div>`).join('');
   return `
-    <div class="synth-block"><h3>${tr('resumen')}</h3><p>${esc(p.resumen||'')}</p></div>
     <div class="synth-block"><h3>${tr('pgEjesTematicos')}</h3><ul>${ejes || `<li class="empty">${tr('sinDatos')}</li>`}</ul></div>
     <div class="synth-block"><h3>${tr('pgConsensosTransversales')}</h3><ul>${consensos || `<li class="empty">${tr('sinDatos')}</li>`}</ul></div>
     <div class="synth-block"><h3>${tr('pgTemasDestacados')}</h3>${destacados || `<p class="empty">${tr('sinDatos')}</p>`}</div>
