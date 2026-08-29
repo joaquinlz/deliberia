@@ -735,10 +735,10 @@ async function listarGruposPublicos(env) {
     `SELECT g.codigo, g.nombre, g.creado,
             COUNT(DISTINCT t.id) AS cantidadTemas,
             MAX(t.ultima_actividad) AS ultimaActividad,
-            COUNT(DISTINCT p.id) AS participaciones
+            COUNT(DISTINCT m.participante_id) AS participaciones
      FROM grupos g
      LEFT JOIN temas t ON t.grupo_codigo = g.codigo AND t.aprobado = 1
-     LEFT JOIN participantes p ON p.grupo_codigo = g.codigo
+     LEFT JOIN mensajes m ON m.tema_id = t.id
      WHERE g.publico = 1
      GROUP BY g.codigo, g.nombre, g.creado
      ORDER BY g.creado DESC`
@@ -1023,10 +1023,10 @@ async function obtenerMonitoreoAdmin(env) {
     `SELECT g.codigo, g.nombre, g.publico, g.creado,
             COUNT(DISTINCT t.id) AS cantidadTemas,
             MAX(t.ultima_actividad) AS ultimaActividad,
-            COUNT(DISTINCT p.id) AS participaciones
+            COUNT(DISTINCT m.participante_id) AS participaciones
      FROM grupos g
      LEFT JOIN temas t ON t.grupo_codigo = g.codigo
-     LEFT JOIN participantes p ON p.grupo_codigo = g.codigo
+     LEFT JOIN mensajes m ON m.tema_id = t.id
      GROUP BY g.codigo
      ORDER BY g.creado DESC`
   ).all();
