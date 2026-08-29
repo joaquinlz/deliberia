@@ -614,9 +614,8 @@ const I18N = {
   acercaMPProximamente: { es:'Mercado Pago (próximamente)', en:'Mercado Pago (coming soon)' },
   acercaPPProximamente: { es:'PayPal (próximamente)', en:'PayPal (coming soon)' },
   acercaCodigoTitulo: { es:'Código abierto', en:'Open source' },
-  acercaCodigoTexto: { es:'Todo el código de DeliberIA es libre de descargar, modificar y reutilizar. Cualquier persona u organización lo puede tomar como base para levantar su propia versión — una cooperativa, un municipio, un sindicato, un consorcio, lo que sea.', en:'All of DeliberIA\'s code is free to download, modify, and reuse. Any person or organization can use it as a base to launch their own version — a cooperative, a local government, a union, a condo association, whatever it may be.' },
-  acercaDescargarCodigo: { es:'Descargar código fuente (.html)', en:'Download source code (.html)' },
-  acercaDescargarError: { es:'No se pudo descargar el archivo desde acá. Podés guardar esta página directamente desde el navegador (Ctrl+S / Cmd+S).', en:'The file couldn\'t be downloaded from here. You can save this page directly from your browser (Ctrl+S / Cmd+S).' },
+  acercaCodigoTexto: { es:'Todo el código de DeliberIA es libre de ver, descargar, modificar y reutilizar: el frontend (esta interfaz) y el backend (el servidor que guarda los datos y habla con la IA) están publicados juntos en un repositorio público de GitHub. Cualquier persona u organización lo puede tomar como base para levantar su propia versión — una cooperativa, un municipio, un sindicato, un consorcio, lo que sea.', en:'All of DeliberIA\'s code is free to view, download, modify, and reuse: the frontend (this interface) and the backend (the server that stores the data and talks to the AI) are published together in a public GitHub repository. Any person or organization can use it as a base to launch their own version — a cooperative, a local government, a union, a condo association, whatever it may be.' },
+  acercaDescargarCodigo: { es:'Ver código fuente en GitHub', en:'View source code on GitHub' },
   acercaResponsabilidadTitulo: { es:'Responsabilidad de uso', en:'Usage responsibility' },
   acercaResponsabilidadTexto1: { es:'DeliberIA se ofrece de forma gratuita y abierta. No se garantiza que esté libre de errores ni que funcione perfectamente para cada caso de uso — se comparte así, con sus límites, para que cualquiera pueda usarlo, revisarlo y mejorarlo. Quien crea un grupo es responsable de su propio espacio: de los temas que abre, de cómo modera, y del uso que su comunidad le da. Cada grupo es completamente independiente — no existe una administración central de la herramienta con acceso o control sobre grupos ajenos.', en:'DeliberIA is offered for free and open to anyone. There is no guarantee that it\'s free of bugs or that it will work perfectly for every use case — it\'s shared as is, with its limits, so that anyone can use, review, and improve it. Whoever creates a group is responsible for their own space: the topics they open, how they moderate, and how their community uses it. Each group is completely independent — there is no central administration of the tool with access or control over other groups.' },
   acercaResponsabilidadTexto2: { es:'Mientras la app funcione conectada al modelo de IA que corre en Cloudflare (como ocurre en esta versión), ese uso queda sujeto a las políticas de uso de ese proveedor, sin importar la interfaz particular que lo presente. Quien descargue este código y lo conecte a otro proveedor de IA, o lo aloje por su cuenta, asume la responsabilidad legal y ética de ese uso bajo su propia jurisdicción — el autor original de este código no se hace responsable por usos indebidos de versiones modificadas o alojadas por terceros.', en:'As long as the app runs connected to the AI model running on Cloudflare (as is the case in this version), that use is subject to that provider\'s usage policies, regardless of the particular interface presenting it. Anyone who downloads this code and connects it to another AI provider, or hosts it themselves, takes on the legal and ethical responsibility for that use under their own jurisdiction — the original author of this code is not responsible for misuse of modified versions or versions hosted by third parties.' },
@@ -1348,7 +1347,7 @@ function renderAcerca(){
     <div class="card">
       <h3 style="font-family:'Fraunces',serif; color:var(--gold); margin-top:0;">${tr('acercaCodigoTitulo')}</h3>
       <p style="font-size:14.5px; line-height:1.6; color:var(--ink); text-align:justify;">${tr('acercaCodigoTexto')}</p>
-      <button class="btn btn-primary btn-sm" id="descargar-codigo" style="margin-top:8px;">${tr('acercaDescargarCodigo')}</button>
+      <a class="btn btn-primary btn-sm" href="https://github.com/joaquinlz/deliberia" target="_blank" rel="noopener" style="margin-top:8px; display:inline-block;">${tr('acercaDescargarCodigo')}</a>
     </div>
 
     <div class="card">
@@ -1362,17 +1361,6 @@ function renderAcerca(){
   const ppLink = document.getElementById('link-paypal');
   if(LINK_MERCADOPAGO){ mpLink.href = LINK_MERCADOPAGO; } else { mpLink.removeAttribute('href'); mpLink.textContent = tr('acercaMPProximamente'); mpLink.style.opacity = '.5'; mpLink.style.cursor = 'default'; mpLink.onclick = (e) => e.preventDefault(); }
   if(LINK_PAYPAL){ ppLink.href = LINK_PAYPAL; } else { ppLink.removeAttribute('href'); ppLink.textContent = tr('acercaPPProximamente'); ppLink.style.opacity = '.5'; ppLink.style.cursor = 'default'; ppLink.onclick = (e) => e.preventDefault(); }
-  document.getElementById('descargar-codigo').onclick = () => {
-    try{
-      const html = '<!doctype html>\n' + document.documentElement.outerHTML;
-      const blob = new Blob([html], { type: 'text/html' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url; a.download = 'deliberia-codigo-fuente.html';
-      document.body.appendChild(a); a.click(); document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }catch(e){ alert(tr('acercaDescargarError')); }
-  };
 }
 
 async function agregarGrupoReciente(codigo, nombre){
