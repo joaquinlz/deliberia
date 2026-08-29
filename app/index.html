@@ -719,44 +719,6 @@ function armarConfirmacionDobleToque(btn, accionConfirmada){
 
 function uid(){ return 'p_' + Math.random().toString(36).slice(2,10); }
 
-async function callClaudeStreaming(messages, system, maxTokens, onProgress){
-  const body = { model:"claude-sonnet-4-6", max_tokens: maxTokens || 1000, system: system, messages: messages, stream: true };
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method:"POST",
-    headers:{ "Content-Type":"application/json" },
-    body: JSON.stringify(body)
-  });
-  if(!res.ok){
-    let detail = '';
-    try{ const b = await res.json(); detail = (b && b.error && b.error.message) || JSON.stringify(b); }catch(e){ detail = await res.text().catch(()=> ''); }
-    throw new Error("api_error_" + res.status + (detail ? ": " + detail : ""));
-  }
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = '';
-  let textoCompleto = '';
-  while(true){
-    const { done, value } = await reader.read();
-    if(done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lineas = buffer.split('\n');
-    buffer = lineas.pop();
-    for(const linea of lineas){
-      if(!linea.startsWith('data: ')) continue;
-      const dataStr = linea.slice(6).trim();
-      if(!dataStr) continue;
-      try{
-        const evt = JSON.parse(dataStr);
-        if(evt.type === 'content_block_delta' && evt.delta && evt.delta.type === 'text_delta'){
-          textoCompleto += evt.delta.text;
-          if(onProgress) onProgress(textoCompleto.length);
-        }
-      }catch(e){}
-    }
-  }
-  return textoCompleto;
-}
-
 function barraProgresoHtml(id){
   return `<div class="barra-progreso-wrap" id="${id}" style="display:none; margin-top:12px;">
     <div style="background:rgba(0,0,0,0.25); border-radius:20px; height:8px; overflow:hidden;">
@@ -776,37 +738,6 @@ function actualizarBarraProgreso(id, pct){
 function ocultarBarraProgreso(id){
   const wrap = document.getElementById(id);
   if(wrap) wrap.style.display = 'none';
-}
-
-async function callClaudeFull(messages, system, tools, maxTokens, toolChoice){
-  const body = { model:"claude-sonnet-4-6", max_tokens: maxTokens || 1000, system: system, messages: messages };
-  if(tools) body.tools = tools;
-  if(toolChoice) body.tool_choice = toolChoice;
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
-    method:"POST",
-    headers:{ "Content-Type":"application/json" },
-    body: JSON.stringify(body)
-  });
-  if(!res.ok){
-    let detail = '';
-    try{ const b = await res.json(); detail = (b && b.error && b.error.message) || JSON.stringify(b); }catch(e){ detail = await res.text().catch(()=> ''); }
-    throw new Error("api_error_" + res.status + (detail ? ": " + detail : ""));
-  }
-  return await res.json();
-}
-
-async function callClaude(messages, system, tools, maxTokens){
-  const data = await callClaudeFull(messages, system, tools, maxTokens);
-  return (data.content || []).map(b => b.text || '').join('');
-}
-
-function calcularMaxTokensSintesis(textoLength){
-  // Escala el margen de respuesta según cuánto texto hay para leer y sintetizar,
-  // para no gastar espacio de más en temas chicos ni quedarse corto en temas grandes.
-  if(textoLength < 4000) return 1000;
-  if(textoLength < 12000) return 2000;
-  if(textoLength < 30000) return 3000;
-  return 4000;
 }
 
 /* Reemplazo de window.storage (exclusivo del sandbox de claude.ai) por localStorage para todo
@@ -875,10 +806,10 @@ async function apiPost(path, body){
 // fragmentos a medida que llegan, junta solo el contenido real (nunca el "pensamiento
 // interno" del modelo, que viaja por separado) y llama a onProgress con la cantidad de
 // caracteres recibidos hasta el momento, para poder animar una barra de progreso.
-async function streamPost(path, onProgress){
+async function streamPost(path, onProgress, body){
   let res;
   try{
-    res = await fetch(API_BASE + path, { method: 'POST' });
+    res = await fetch(API_BASE + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
   }catch(e){
     return { error: 'api_error_conexion' };
   }
@@ -934,31 +865,6 @@ async function storageList(prefix, shared){
 }
 async function storageDelete(key, shared){ return rawStorageDelete(wsPrefix() + key, shared); }
 
-async function traducirObjetoSintesis(obj, idiomaDestino){
-  const idiomaTexto = idiomaDestino === 'en' ? 'English' : 'Spanish';
-  const { _lang, traducciones, ...contenido } = obj;
-  const prompt = `Translate all the text VALUES in the following JSON object to ${idiomaTexto}. Do NOT translate any array called "participantes" — keep people's names exactly as given, untouched. Keep the exact same JSON structure, same keys, same array lengths and order. Respond ONLY with the translated JSON object, no extra text, no markdown.\n\nJSON:\n${JSON.stringify(contenido)}`;
-  try{
-    const raw = await callClaude([{ role:'user', content: prompt }], 'You are a precise, concise translator. Only output the requested JSON, preserving structure exactly.', null, 2500);
-    const cleaned = raw.replace(/```json|```/g, '').trim();
-    return JSON.parse(cleaned);
-  }catch(e){
-    return contenido;
-  }
-}
-
-async function obtenerSintesisEnIdioma(objRaw, guardarFn){
-  if(!objRaw) return null;
-  const idiomaOriginal = objRaw._lang || 'es';
-  if(state.lang === idiomaOriginal) return objRaw;
-  if(objRaw.traducciones && objRaw.traducciones[state.lang]) return objRaw.traducciones[state.lang];
-  const trad = await traducirObjetoSintesis(objRaw, state.lang);
-  if(!objRaw.traducciones) objRaw.traducciones = {};
-  objRaw.traducciones[state.lang] = trad;
-  if(guardarFn){ try{ await guardarFn(objRaw); }catch(e){} }
-  return trad;
-}
-
 function textoTemaSync(t){
   if(t.traducciones && t.traducciones[state.lang]) return t.traducciones[state.lang];
   return { titulo: t.titulo, descripcion: t.descripcion || '' };
@@ -970,37 +876,19 @@ function encuestaTraducida(t){
   return t.encuesta;
 }
 
-async function traducirTemaConIA(titulo, descripcion, idiomaDestino, encuesta){
-  const idiomaTexto = idiomaDestino === 'en' ? 'English' : 'Spanish';
-  const parteEncuesta = encuesta ? `\nPoll question: ${encuesta.pregunta}\nPoll options (as a JSON array, keep the same order and count): ${JSON.stringify(encuesta.opciones)}` : '';
-  const formaEncuesta = encuesta ? `, "encuestaPregunta":"...", "encuestaOpciones":["...", "..."]` : '';
-  const prompt = `You'll receive a topic title and description${encuesta ? ', plus a poll question and its options,' : ''} in whatever language they were originally written (detect it yourself, don't assume). If they are already in ${idiomaTexto}, return them EXACTLY as given, word for word, with no changes. If they are in any other language, translate them to ${idiomaTexto}. Respond ONLY with a valid JSON object, no extra text, no markdown, in this exact shape: {"titulo":"...","descripcion":"..."${formaEncuesta}}\n\nTitle: ${titulo}\nDescription: ${descripcion || ''}${parteEncuesta}`;
-  try{
-    const raw = await callClaude([{ role:'user', content: prompt }], 'You are a precise, concise translator. Only output the requested JSON, nothing else.', null, 700);
-    const cleaned = raw.replace(/```json|```/g, '').trim();
-    const parsed = JSON.parse(cleaned);
-    const resultado = { titulo: parsed.titulo || titulo, descripcion: parsed.descripcion || (descripcion || '') };
-    if(encuesta){
-      resultado.encuesta = {
-        pregunta: parsed.encuestaPregunta || encuesta.pregunta,
-        opciones: (Array.isArray(parsed.encuestaOpciones) && parsed.encuestaOpciones.length === encuesta.opciones.length) ? parsed.encuestaOpciones : encuesta.opciones,
-        multiple: encuesta.multiple
-      };
-    }
-    return resultado;
-  }catch(e){
-    return null;
-  }
+async function traducirTemaConIA(temaId, idiomaDestino){
+  const resultado = await apiPost('/grupos/' + state.workspaceId + '/temas/' + temaId + '/traducir', { idioma: idiomaDestino });
+  if(!resultado || resultado.error) return null;
+  return resultado;
 }
 
 async function asegurarTraduccionesTemas(temas){
   for(const t of temas){
     if(t.traducciones && t.traducciones[state.lang]) continue;
-    const trad = await traducirTemaConIA(t.titulo, t.descripcion || '', state.lang, t.encuesta || null);
+    const trad = await traducirTemaConIA(t.id, state.lang);
     if(!trad) continue;
     if(!t.traducciones) t.traducciones = {};
     t.traducciones[state.lang] = trad;
-    await patchTema(t.id, x => { x.traducciones = x.traducciones || {}; x.traducciones[state.lang] = trad; });
     const elTitulo = document.querySelector(`[data-tema-titulo="${t.id}"]`);
     const elDesc = document.querySelector(`[data-tema-desc="${t.id}"]`);
     if(elTitulo) elTitulo.textContent = trad.titulo;
@@ -1108,7 +996,7 @@ async function sendToSoporte(userText){
   render();
   try{
     if(!state.soporteId) state.soporteId = uid();
-    const resultado = await apiPost('/soporte/mensajes', { sesionId: state.soporteId, mensaje: userText || '' });
+    const resultado = await apiPost('/soporte/mensajes', { sesionId: state.soporteId, mensaje: userText || '', lang: state.lang });
     if(resultado.error) throw new Error(resultado.error);
     state.soporteMessages.push({ role:'assistant', content: resultado.respuesta });
   }catch(e){
@@ -1355,7 +1243,7 @@ function renderSoporteAdmin(){
     state.busy = true; state.error=''; state.errorSoporteAdmin=''; render();
     const s = await streamPost('/soporte/sintesis', (chars) => {
       actualizarBarraProgreso('progreso-soporte', (chars / 8000) * 100);
-    });
+    }, { idioma: state.lang });
     ocultarBarraProgreso('progreso-soporte');
     if(s.error) state.errorSoporteAdmin = s.error === 'Todavía no hay consultas de soporte.' ? tr('soporteAdminSinConsultas') : tr('errorGeneracion');
     else state.sintesisSoporte = s;
@@ -1367,8 +1255,8 @@ function renderSoporteAdmin(){
     descargarWordBlob(html, 'consultas_y_sugerencias_deliberia.doc', null, 'soporte-err');
   };
   (async () => {
-    const rRaw = await apiGet('/soporte/sintesis');
-    state.sintesisSoporte = await obtenerSintesisEnIdioma((rRaw && !rRaw.error) ? rRaw : null, null);
+    const rRaw = await apiPost('/soporte/sintesis/traducir', { idioma: state.lang });
+    state.sintesisSoporte = (rRaw && !rRaw.error) ? rRaw : null;
     const area = document.getElementById('soporte-area');
     if(area) area.innerHTML = renderSintesisSoporteContenido(state.sintesisSoporte);
     const dlBtn = document.getElementById('download-soporte');
@@ -1696,7 +1584,7 @@ function renderPanoramaGrupoPublico(){
     const presupuestoAprox = 12000;
     const p = await streamPost('/grupos/' + g.codigo + '/panorama', (chars) => {
       actualizarBarraProgreso('progreso-pg', (chars / presupuestoAprox) * 100);
-    });
+    }, { idioma: state.lang });
     ocultarBarraProgreso('progreso-pg');
     if(p.error) state.errorPanoramaGrupo = p.error === 'Todavía no hay síntesis de temas suficientes para armar el panorama del grupo.' ? tr('pgSinSintesis') : p.error;
     else state.panoramaGrupoActual = p;
@@ -1709,7 +1597,7 @@ function renderPanoramaGrupoPublico(){
     descargarWordBlob(html, nombre, null, 'pg-err');
   };
   (async () => {
-    const p = await apiGet('/grupos/' + g.codigo + '/panorama');
+    const p = await apiPost('/grupos/' + g.codigo + '/panorama/traducir', { idioma: state.lang });
     state.panoramaGrupoActual = (p && !p.error) ? p : null;
     document.getElementById('pg-area').innerHTML = renderPanoramaGrupoContenido(state.panoramaGrupoActual);
   })();
@@ -2005,7 +1893,7 @@ function renderParticipantTopics(){
     const tema = state.temas.find(t => t.id === b.dataset.id);
     state.temaActual = tema;
     state.error = '';
-    const s = await apiGet('/grupos/' + state.workspaceId + '/temas/' + tema.id + '/sintesis');
+    const s = await apiPost('/grupos/' + state.workspaceId + '/temas/' + tema.id + '/sintesis/traducir', { idioma: state.lang });
     state.synth = (s && !s.error) ? s : null;
     if(tema.encuesta){
       const res = await apiGet('/grupos/' + state.workspaceId + '/temas/' + tema.id + '/votos/resultados');
@@ -2079,7 +1967,7 @@ function renderParticipantNuevoTema(){
       if(!pregunta || opciones.length < 2){ document.getElementById('np-err').textContent = tr('modNewTemaFaltaEncuesta'); return; }
       encuesta = { pregunta, opciones, multiple: document.getElementById('encuesta-multiple').checked };
     }
-    const resultado = await crearTemaBackend({ titulo, descripcion, encuesta, creadoPor: 'participante', creadorNombre: state.savedName });
+    const resultado = await crearTemaBackend({ titulo, descripcion, encuesta, creadoPor: 'participante', creadorNombre: state.savedName, idioma: state.lang });
     if(!resultado || resultado.error){ document.getElementById('np-err').textContent = (resultado && resultado.error) || tr('errorGeneracion'); return; }
     await loadTemas();
     state.view = 'p-topics'; render();
@@ -2116,7 +2004,7 @@ function renderParticipantRegistro(){
     const presupuestoAprox = 12000;
     const s = await streamPost('/grupos/' + state.workspaceId + '/temas/' + t.id + '/sintesis', (chars) => {
       actualizarBarraProgreso('progreso-synth', (chars / presupuestoAprox) * 100);
-    });
+    }, { idioma: state.lang });
     ocultarBarraProgreso('progreso-synth');
     if(s.error) state.error = s.error === 'Todavía no hay conversaciones en este tema.' ? tr('pChatSinConversaciones') : tr('errorGeneracion');
     else state.synth = s;
@@ -2141,7 +2029,7 @@ async function sendToAI(userText){
   try{
     const resultado = await apiPost(
       '/grupos/' + state.workspaceId + '/temas/' + state.temaActual.id + '/mensajes',
-      { participanteId: state.participantId, mensaje: userText || '', herramienta }
+      { participanteId: state.participantId, mensaje: userText || '', herramienta, lang: state.lang }
     );
     if(resultado.error) throw new Error(resultado.error);
     state.messages.push({ role:'assistant', content: resultado.respuesta });
@@ -2492,8 +2380,8 @@ function renderModerator(){
     state.temaActual = state.temas.find(t => t.id === b.dataset.id);
     state.editingTema = false;
     state.error = '';
-    const sRaw = await apiGet('/grupos/' + state.workspaceId + '/temas/' + state.temaActual.id + '/sintesis');
-    state.synth = await obtenerSintesisEnIdioma((sRaw && !sRaw.error) ? sRaw : null, null);
+    const sRaw = await apiPost('/grupos/' + state.workspaceId + '/temas/' + state.temaActual.id + '/sintesis/traducir', { idioma: state.lang });
+    state.synth = (sRaw && !sRaw.error) ? sRaw : null;
     if(state.temaActual.encuesta){
       const res = await apiGet('/grupos/' + state.workspaceId + '/temas/' + state.temaActual.id + '/votos/resultados');
       state.encuestaResultados = (res && !res.error) ? res : { counts: state.temaActual.encuesta.opciones.map(()=>0), totalVotantes: 0 };
@@ -2589,7 +2477,7 @@ function renderModNewTema(){
       if(!pregunta || opciones.length < 2){ document.getElementById('err').textContent = tr('modNewTemaFaltaEncuesta'); return; }
       encuesta = { pregunta, opciones, multiple: document.getElementById('encuesta-multiple').checked };
     }
-    const resultado = await crearTemaBackend({ titulo, descripcion, encuesta, creadoPor: 'moderador' });
+    const resultado = await crearTemaBackend({ titulo, descripcion, encuesta, creadoPor: 'moderador', idioma: state.lang });
     if(!resultado || resultado.error){ document.getElementById('err').textContent = (resultado && resultado.error) || tr('errorGeneracion'); return; }
     await loadTemas(true);
     state.view = 'moderator'; render();
@@ -2713,7 +2601,7 @@ function renderModTemaDetail(){
     const presupuestoAprox = 12000;
     const s = await streamPost('/grupos/' + state.workspaceId + '/temas/' + t.id + '/sintesis', (chars) => {
       actualizarBarraProgreso('progreso-synth-mod', (chars / presupuestoAprox) * 100);
-    });
+    }, { idioma: state.lang });
     ocultarBarraProgreso('progreso-synth-mod');
     if(s.error) state.error = s.error === 'Todavía no hay conversaciones en este tema.' ? tr('pChatSinConversaciones') : tr('errorGeneracion');
     else state.synth = s;
