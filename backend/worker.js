@@ -110,6 +110,59 @@ async function hashPin(pin) {
   return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
+// --- Rate limiting y bloqueo de PIN por fuerza bruta ---
+// Todo esto usa una única tabla genérica (rate_limits), con la misma idea de
+// "tipo + clave" que ya se usa en traducciones: contadores por ventana de
+// tiempo fija (bucket), que se limpian solos con el tiempo.
+
+function obtenerIP(request) {
+  return request.headers.get('CF-Connecting-IP') || 'desconocida';
+}
+
+function respuestaLimiteExcedido() {
+  return Response.json({ error: 'Demasiadas solicitudes seguidas. Esperá un momento y probá de nuevo.' }, { status: 429 });
+}
+
+async function limpiarRateLimitsVencidos(env) {
+  // Se llama solo ocasionalmente (no en cada request) para no sumar una query de más siempre.
+  if (Math.random() < 0.02) {
+    await env.DB.prepare("DELETE FROM rate_limits WHERE expira < ?").bind(Date.now()).run();
+  }
+}
+
+// Devuelve true si la acción está permitida (todavía no se llegó al límite en esta ventana).
+async function chequearLimite(env, clave, limite, ventanaMs) {
+  const bucket = Math.floor(Date.now() / ventanaMs);
+  const claveCompleta = `${clave}:${bucket}`;
+  const expira = Date.now() + ventanaMs + 60000;
+  const row = await env.DB.prepare(
+    `INSERT INTO rate_limits (clave, contador, expira) VALUES (?, 1, ?)
+     ON CONFLICT(clave) DO UPDATE SET contador = contador + 1
+     RETURNING contador`
+  ).bind(claveCompleta, expira).first();
+  await limpiarRateLimitsVencidos(env);
+  return row.contador <= limite;
+}
+
+// Bloqueo por intentos fallidos de PIN: a diferencia de chequearLimite, acá solo se
+// suma en los intentos que fallan (uno correcto no cuenta), y se puede consultar sin sumar.
+async function pinBloqueado(env, clave, limite, ventanaMs) {
+  const bucket = Math.floor(Date.now() / ventanaMs);
+  const row = await env.DB.prepare("SELECT contador FROM rate_limits WHERE clave = ?").bind(`${clave}:${bucket}`).first();
+  return !!row && row.contador >= limite;
+}
+
+async function registrarFalloPin(env, clave, ventanaMs) {
+  const bucket = Math.floor(Date.now() / ventanaMs);
+  const claveCompleta = `${clave}:${bucket}`;
+  const expira = Date.now() + ventanaMs + 60000;
+  await env.DB.prepare(
+    `INSERT INTO rate_limits (clave, contador, expira) VALUES (?, 1, ?)
+     ON CONFLICT(clave) DO UPDATE SET contador = contador + 1`
+  ).bind(claveCompleta, expira).run();
+  await limpiarRateLimitsVencidos(env);
+}
+
 function idiomaValido(idioma) {
   return idioma === 'en' ? 'en' : 'es';
 }
@@ -223,21 +276,28 @@ async function crearGrupo(env, body) {
   };
 }
 
-async function verificarPin(env, codigo, pin, tipo) {
+async function verificarPin(env, codigo, pin, tipo, ip) {
   const grupo = await env.DB.prepare(
     "SELECT pin_hash, pin_acceso_hash FROM grupos WHERE codigo = ?"
   ).bind(codigo).first();
   if (!grupo) return { error: 'No existe ese grupo.' };
-  if (tipo === 'acceso') {
-    if (!grupo.pin_acceso_hash) return { correcto: true };
-    const hash = await hashPin(pin || '');
-    return { correcto: hash === grupo.pin_acceso_hash };
+
+  const esAcceso = tipo === 'acceso';
+  if (esAcceso && !grupo.pin_acceso_hash) return { correcto: true };
+
+  const claveBloqueo = `pinfail:${esAcceso ? 'acceso' : 'moderador'}:${codigo}:${ip || 'desconocida'}`;
+  if (await pinBloqueado(env, claveBloqueo, 5, 15 * 60 * 1000)) {
+    return { error: 'Demasiados intentos fallidos. Esperá unos minutos y volvé a probar.', bloqueado: true };
   }
+
+  const hashEsperado = esAcceso ? grupo.pin_acceso_hash : grupo.pin_hash;
   const hash = await hashPin(pin || '');
-  return { correcto: hash === grupo.pin_hash };
+  const correcto = hash === hashEsperado;
+  if (!correcto) await registrarFalloPin(env, claveBloqueo, 15 * 60 * 1000);
+  return { correcto };
 }
 
-async function crearTema(env, codigo, body) {
+async function crearTema(env, codigo, body, ip) {
   const grupo = await env.DB.prepare(
     "SELECT codigo, permitir_crear_temas, requiere_aprobacion FROM grupos WHERE codigo = ?"
   ).bind(codigo).first();
@@ -250,6 +310,11 @@ async function crearTema(env, codigo, body) {
   const creadoPor = body.creadoPor === 'participante' ? 'participante' : 'moderador';
   if (creadoPor === 'participante' && !grupo.permitir_crear_temas) {
     return { error: 'Este grupo no permite que los participantes propongan temas.' };
+  }
+  if (creadoPor === 'moderador') {
+    const check = await verificarPin(env, codigo, body.pin, 'moderador', ip);
+    if (check.error) return check;
+    if (!check.correcto) return { error: 'PIN incorrecto.' };
   }
   const creadorNombre = creadoPor === 'participante' ? ((body.creadorNombre || '').trim().slice(0, 60) || null) : null;
   const aprobado = creadoPor === 'moderador' || !grupo.requiere_aprobacion ? 1 : 0;
@@ -413,7 +478,7 @@ ${cuerpo}
 Contá lo que encontraste con tus propias palabras, de forma breve, sin citar textualmente párrafos largos, y mencionando de dónde salió el dato si es relevante. Si los resultados no responden bien la pregunta, decilo con naturalidad en vez de inventar.`;
 }
 
-async function chatearConTema(env, codigo, temaId, body) {
+async function chatearConTema(env, codigo, temaId, body, ip) {
   const tema = await env.DB.prepare(
     "SELECT id, titulo, descripcion FROM temas WHERE id = ? AND grupo_codigo = ?"
   ).bind(temaId, codigo).first();
@@ -457,10 +522,14 @@ async function chatearConTema(env, codigo, temaId, body) {
     systemContent += '\n\n' + promptHerramientaOpiniones(transcript);
   } else if (body.herramienta === 'busqueda_web' && (body.mensaje || '').trim()) {
     let resultadoBusqueda = null;
-    try {
-      resultadoBusqueda = await buscarEnWeb(env, body.mensaje.trim());
-    } catch (e) {
-      resultadoBusqueda = null;
+    const permitidaPorIP = await chequearLimite(env, `busqueda_web_ip:${ip || 'desconocida'}`, 10, 60 * 60 * 1000);
+    const permitidaGlobal = await chequearLimite(env, 'busqueda_web_global', 300, 24 * 60 * 60 * 1000);
+    if (permitidaPorIP && permitidaGlobal) {
+      try {
+        resultadoBusqueda = await buscarEnWeb(env, body.mensaje.trim());
+      } catch (e) {
+        resultadoBusqueda = null;
+      }
     }
     systemContent += '\n\n' + promptHerramientaBusquedaWeb(resultadoBusqueda);
   }
@@ -870,7 +939,11 @@ function mapearTema(t) {
   };
 }
 
-async function actualizarTema(env, codigo, temaId, body) {
+async function actualizarTema(env, codigo, temaId, body, ip) {
+  const check = await verificarPin(env, codigo, body.pin, 'moderador', ip);
+  if (check.error) return check;
+  if (!check.correcto) return { error: 'PIN incorrecto.' };
+
   const tema = await env.DB.prepare("SELECT id FROM temas WHERE id = ? AND grupo_codigo = ?").bind(temaId, codigo).first();
   if (!tema) return { error: 'No existe ese tema.' };
 
@@ -919,7 +992,11 @@ async function actualizarTema(env, codigo, temaId, body) {
   return mapearTema(actualizado);
 }
 
-async function eliminarTema(env, codigo, temaId) {
+async function eliminarTema(env, codigo, temaId, body, ip) {
+  const check = await verificarPin(env, codigo, body.pin, 'moderador', ip);
+  if (check.error) return check;
+  if (!check.correcto) return { error: 'PIN incorrecto.' };
+
   const tema = await env.DB.prepare("SELECT id FROM temas WHERE id = ? AND grupo_codigo = ?").bind(temaId, codigo).first();
   if (!tema) return { error: 'No existe ese tema.' };
   await env.DB.prepare("DELETE FROM mensajes WHERE tema_id = ?").bind(temaId).run();
@@ -929,7 +1006,11 @@ async function eliminarTema(env, codigo, temaId) {
   return { ok: true };
 }
 
-async function actualizarAjustes(env, codigo, body) {
+async function actualizarAjustes(env, codigo, body, ip) {
+  const check = await verificarPin(env, codigo, body.pin, 'moderador', ip);
+  if (check.error) return check;
+  if (!check.correcto) return { error: 'PIN incorrecto.' };
+
   const grupo = await env.DB.prepare("SELECT codigo FROM grupos WHERE codigo = ?").bind(codigo).first();
   if (!grupo) return { error: 'No existe ese grupo.' };
 
@@ -945,7 +1026,11 @@ async function actualizarAjustes(env, codigo, body) {
   return { ok: true };
 }
 
-async function actualizarPinAcceso(env, codigo, body) {
+async function actualizarPinAcceso(env, codigo, body, ip) {
+  const check = await verificarPin(env, codigo, body.pin, 'moderador', ip);
+  if (check.error) return check;
+  if (!check.correcto) return { error: 'PIN incorrecto.' };
+
   const grupo = await env.DB.prepare("SELECT codigo FROM grupos WHERE codigo = ?").bind(codigo).first();
   if (!grupo) return { error: 'No existe ese grupo.' };
   const pin = (body.pinAcceso || '').trim();
@@ -967,15 +1052,19 @@ async function cascadeEliminarGrupo(env, codigo) {
   await env.DB.prepare("DELETE FROM grupos WHERE codigo = ?").bind(codigo).run();
 }
 
-async function eliminarGrupo(env, codigo, body) {
-  const check = await verificarPin(env, codigo, body.pin);
+async function eliminarGrupo(env, codigo, body, ip) {
+  const check = await verificarPin(env, codigo, body.pin, undefined, ip);
   if (check.error) return check;
   if (!check.correcto) return { error: 'PIN incorrecto.' };
   await cascadeEliminarGrupo(env, codigo);
   return { ok: true };
 }
 
-async function verificarPinAdmin(env, pin) {
+async function verificarPinAdmin(env, pin, ip) {
+  const claveBloqueo = `pinfail:admin:${ip || 'desconocida'}`;
+  if (await pinBloqueado(env, claveBloqueo, 5, 15 * 60 * 1000)) {
+    return { correcto: false, nuevo: false, bloqueado: true, error: 'Demasiados intentos fallidos. Esperá unos minutos y volvé a probar.' };
+  }
   const row = await env.DB.prepare("SELECT pin_hash FROM admin WHERE id = 1").first();
   if (!row) {
     const hash = await hashPin(pin || '');
@@ -983,11 +1072,14 @@ async function verificarPinAdmin(env, pin) {
     return { correcto: true, nuevo: true };
   }
   const hash = await hashPin(pin || '');
-  return { correcto: hash === row.pin_hash, nuevo: false };
+  const correcto = hash === row.pin_hash;
+  if (!correcto) await registrarFalloPin(env, claveBloqueo, 15 * 60 * 1000);
+  return { correcto, nuevo: false };
 }
 
-async function eliminarGrupoAdmin(env, codigo, adminPin) {
-  const check = await verificarPinAdmin(env, adminPin);
+async function eliminarGrupoAdmin(env, codigo, adminPin, ip) {
+  const check = await verificarPinAdmin(env, adminPin, ip);
+  if (check.error) return check;
   if (!check.correcto) return { error: 'PIN de administración incorrecto.' };
   const grupo = await env.DB.prepare("SELECT codigo FROM grupos WHERE codigo = ?").bind(codigo).first();
   if (!grupo) return { error: 'No existe ese grupo.' };
@@ -1196,6 +1288,7 @@ function corsHeaders() {
 
 async function handleRequest(request, env, ctx) {
     const url = new URL(request.url);
+    const ip = obtenerIP(request);
 
     if (url.pathname === '/test-db') {
       await env.DB.exec(
@@ -1230,6 +1323,7 @@ async function handleRequest(request, env, ctx) {
     }
 
     if (url.pathname === '/grupos' && request.method === 'POST') {
+      if (!(await chequearLimite(env, `grupo_nuevo:${ip}`, 5, 60 * 60 * 1000))) return respuestaLimiteExcedido();
       const body = await request.json();
       const resultado = await crearGrupo(env, body);
       if (resultado.error) return Response.json(resultado, { status: 400 });
@@ -1265,8 +1359,8 @@ async function handleRequest(request, env, ctx) {
     if (url.pathname.startsWith('/grupos/') && url.pathname.endsWith('/verificar-pin') && request.method === 'POST') {
       const codigo = url.pathname.split('/')[2];
       const body = await request.json();
-      const resultado = await verificarPin(env, codigo, body.pin, body.tipo);
-      if (resultado.error) return Response.json(resultado, { status: 404 });
+      const resultado = await verificarPin(env, codigo, body.pin, body.tipo, ip);
+      if (resultado.error) return Response.json(resultado, { status: resultado.bloqueado ? 429 : 404 });
       return Response.json(resultado);
     }
 
@@ -1281,8 +1375,8 @@ async function handleRequest(request, env, ctx) {
     if (url.pathname.startsWith('/grupos/') && url.pathname.endsWith('/temas') && request.method === 'POST') {
       const codigo = url.pathname.split('/')[2];
       const body = await request.json();
-      const resultado = await crearTema(env, codigo, body);
-      if (resultado.error) return Response.json(resultado, { status: 400 });
+      const resultado = await crearTema(env, codigo, body, ip);
+      if (resultado.error) return Response.json(resultado, { status: resultado.bloqueado ? 429 : 400 });
       return Response.json(resultado, { status: 201 });
     }
 
@@ -1302,16 +1396,16 @@ async function handleRequest(request, env, ctx) {
     if (url.pathname.startsWith('/grupos/') && url.pathname.endsWith('/ajustes') && request.method === 'POST') {
       const codigo = url.pathname.split('/')[2];
       const body = await request.json();
-      const resultado = await actualizarAjustes(env, codigo, body);
-      if (resultado.error) return Response.json(resultado, { status: 400 });
+      const resultado = await actualizarAjustes(env, codigo, body, ip);
+      if (resultado.error) return Response.json(resultado, { status: resultado.bloqueado ? 429 : 400 });
       return Response.json(resultado);
     }
 
     if (url.pathname.startsWith('/grupos/') && url.pathname.endsWith('/pin-acceso') && request.method === 'POST') {
       const codigo = url.pathname.split('/')[2];
       const body = await request.json();
-      const resultado = await actualizarPinAcceso(env, codigo, body);
-      if (resultado.error) return Response.json(resultado, { status: 400 });
+      const resultado = await actualizarPinAcceso(env, codigo, body, ip);
+      if (resultado.error) return Response.json(resultado, { status: resultado.bloqueado ? 429 : 400 });
       return Response.json(resultado);
     }
 
@@ -1320,8 +1414,8 @@ async function handleRequest(request, env, ctx) {
       if (partesGrupo.length === 3 && partesGrupo[0] === 'grupos' && partesGrupo[2] === 'eliminar' && request.method === 'POST') {
         const codigo = partesGrupo[1];
         const body = await request.json();
-        const resultado = await eliminarGrupo(env, codigo, body);
-        if (resultado.error) return Response.json(resultado, { status: 400 });
+        const resultado = await eliminarGrupo(env, codigo, body, ip);
+        if (resultado.error) return Response.json(resultado, { status: resultado.bloqueado ? 429 : 400 });
         return Response.json(resultado);
       }
     }
@@ -1341,14 +1435,15 @@ async function handleRequest(request, env, ctx) {
       if (esGrupoTema4 && request.method === 'POST') {
         const codigo = partes[1], temaId = partes[3];
         const body = await request.json();
-        const resultado = await actualizarTema(env, codigo, temaId, body);
-        if (resultado.error) return Response.json(resultado, { status: 400 });
+        const resultado = await actualizarTema(env, codigo, temaId, body, ip);
+        if (resultado.error) return Response.json(resultado, { status: resultado.bloqueado ? 429 : 400 });
         return Response.json(resultado);
       }
       if (esRutaEliminarTema && request.method === 'POST') {
         const codigo = partes[1], temaId = partes[3];
-        const resultado = await eliminarTema(env, codigo, temaId);
-        if (resultado.error) return Response.json(resultado, { status: 400 });
+        const body = await request.json().catch(() => ({}));
+        const resultado = await eliminarTema(env, codigo, temaId, body, ip);
+        if (resultado.error) return Response.json(resultado, { status: resultado.bloqueado ? 429 : 400 });
         return Response.json(resultado);
       }
       if (esRutaTraducirTema && request.method === 'POST') {
@@ -1385,9 +1480,10 @@ async function handleRequest(request, env, ctx) {
         return Response.json(resultado);
       }
       if (esRutaMensajes && request.method === 'POST') {
+        if (!(await chequearLimite(env, `chat:${ip}`, 20, 60 * 1000))) return respuestaLimiteExcedido();
         const codigo = partes[1], temaId = partes[3];
         const body = await request.json();
-        const resultado = await chatearConTema(env, codigo, temaId, body);
+        const resultado = await chatearConTema(env, codigo, temaId, body, ip);
         if (resultado.error) return Response.json(resultado, { status: 400 });
         return Response.json(resultado);
       }
@@ -1430,16 +1526,18 @@ async function handleRequest(request, env, ctx) {
     if (url.pathname === '/test-verificar-pin') {
       const codigo = url.searchParams.get('codigo') || '';
       const pin = url.searchParams.get('pin') || '';
-      const resultado = await verificarPin(env, codigo, pin);
+      const resultado = await verificarPin(env, codigo, pin, undefined, ip);
       return Response.json(resultado);
     }
 
     if (url.pathname === '/test-crear-tema') {
       const codigo = url.searchParams.get('codigo') || '';
+      const pin = url.searchParams.get('pin') || '';
       const resultado = await crearTema(env, codigo, {
         titulo: 'Tema de prueba',
-        descripcion: 'Un tema creado para probar el circuito.'
-      });
+        descripcion: 'Un tema creado para probar el circuito.',
+        pin
+      }, ip);
       return Response.json(resultado);
     }
 
@@ -1455,7 +1553,7 @@ async function handleRequest(request, env, ctx) {
       const temaId = url.searchParams.get('temaId') || '';
       const participanteId = url.searchParams.get('participanteId') || '';
       const mensaje = url.searchParams.get('mensaje') || '';
-      const resultado = await chatearConTema(env, codigo, temaId, { participanteId, mensaje });
+      const resultado = await chatearConTema(env, codigo, temaId, { participanteId, mensaje }, ip);
       return Response.json(resultado);
     }
 
@@ -1467,11 +1565,13 @@ async function handleRequest(request, env, ctx) {
 
     if (url.pathname === '/test-crear-tema-encuesta') {
       const codigo = url.searchParams.get('codigo') || '';
+      const pin = url.searchParams.get('pin') || '';
       const resultado = await crearTema(env, codigo, {
         titulo: 'Tema de prueba con encuesta',
         descripcion: 'Un tema con encuesta para probar el voto.',
-        encuesta: { pregunta: '¿Qué opción preferís?', opciones: ['Opción A', 'Opción B', 'Opción C'], multiple: false }
-      });
+        encuesta: { pregunta: '¿Qué opción preferís?', opciones: ['Opción A', 'Opción B', 'Opción C'], multiple: false },
+        pin
+      }, ip);
       return Response.json(resultado);
     }
 
@@ -1490,6 +1590,7 @@ async function handleRequest(request, env, ctx) {
     }
 
     if (url.pathname === '/soporte/mensajes' && request.method === 'POST') {
+      if (!(await chequearLimite(env, `chat:${ip}`, 20, 60 * 1000))) return respuestaLimiteExcedido();
       const body = await request.json();
       const resultado = await chatearSoporte(env, body);
       if (resultado.error) return Response.json(resultado, { status: 400 });
@@ -1515,8 +1616,8 @@ async function handleRequest(request, env, ctx) {
 
     if (url.pathname === '/admin/verificar-pin' && request.method === 'POST') {
       const body = await request.json();
-      const resultado = await verificarPinAdmin(env, body.pin);
-      return Response.json(resultado);
+      const resultado = await verificarPinAdmin(env, body.pin, ip);
+      return Response.json(resultado, { status: resultado.bloqueado ? 429 : 200 });
     }
 
     if (url.pathname === '/admin/monitoreo' && request.method === 'GET') {
@@ -1529,8 +1630,8 @@ async function handleRequest(request, env, ctx) {
       if (partesAdmin.length === 4 && partesAdmin[0] === 'admin' && partesAdmin[1] === 'grupos' && partesAdmin[3] === 'eliminar' && request.method === 'POST') {
         const codigo = partesAdmin[2];
         const body = await request.json();
-        const resultado = await eliminarGrupoAdmin(env, codigo, body.adminPin);
-        if (resultado.error) return Response.json(resultado, { status: 400 });
+        const resultado = await eliminarGrupoAdmin(env, codigo, body.adminPin, ip);
+        if (resultado.error) return Response.json(resultado, { status: resultado.bloqueado ? 429 : 400 });
         return Response.json(resultado);
       }
     }

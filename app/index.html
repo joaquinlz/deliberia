@@ -927,7 +927,7 @@ async function crearTemaBackend(datos){
 }
 
 async function patchTema(id, body){
-  const actualizado = await apiPost('/grupos/' + state.workspaceId + '/temas/' + id, body);
+  const actualizado = await apiPost('/grupos/' + state.workspaceId + '/temas/' + id, { ...body, pin: state.moderatorPin });
   if(!actualizado || actualizado.error) return null;
   const idx = state.temas.findIndex(x => x.id === id);
   if(idx > -1) state.temas[idx] = { ...state.temas[idx], ...actualizado };
@@ -936,7 +936,7 @@ async function patchTema(id, body){
 }
 
 async function eliminarTemaBackend(id){
-  await apiPost('/grupos/' + state.workspaceId + '/temas/' + id + '/eliminar', {});
+  await apiPost('/grupos/' + state.workspaceId + '/temas/' + id + '/eliminar', { pin: state.moderatorPin });
   state.temas = state.temas.filter(x => x.id !== id);
 }
 
@@ -1074,7 +1074,7 @@ function renderSoporteAdminPin(){
     const v = document.getElementById('sa-pin').value.trim();
     if(!v){ document.getElementById('sa-err').textContent = tr('ingresarUnPin'); return; }
     const resultado = await apiPost('/admin/verificar-pin', { pin: v });
-    if(!resultado || !resultado.correcto){ document.getElementById('sa-err').textContent = tr('pinIncorrecto'); return; }
+    if(!resultado || !resultado.correcto){ document.getElementById('sa-err').textContent = (resultado && resultado.error) || tr('pinIncorrecto'); return; }
     state.adminPin = v;
     state.view = 'soporte-admin'; render();
   };
@@ -1701,7 +1701,7 @@ function renderAccesoPin(){
   const submit = async () => {
     const v = document.getElementById('ap-pin').value.trim();
     const resultado = await apiPost('/grupos/' + state.workspaceId + '/verificar-pin', { pin: v, tipo: 'acceso' });
-    if(!resultado.correcto){ document.getElementById('ap-err').textContent = tr('pinIncorrecto'); return; }
+    if(!resultado || !resultado.correcto){ document.getElementById('ap-err').textContent = (resultado && resultado.error) || tr('pinIncorrecto'); return; }
     state.accesoDesbloqueado = true;
     const perfilR = await storageGet('mi-perfil', false);
     const perfil = perfilR ? JSON.parse(perfilR.value) : null;
@@ -2248,7 +2248,7 @@ function renderModPin(){
     const v = document.getElementById('pin-input').value.trim();
     if(!v){ document.getElementById('pin-err').textContent = tr('pinIncorrecto'); return; }
     const resultado = await apiPost('/grupos/' + state.workspaceId + '/verificar-pin', { pin: v });
-    if(!resultado || !resultado.correcto){ document.getElementById('pin-err').textContent = tr('pinIncorrecto'); return; }
+    if(!resultado || !resultado.correcto){ document.getElementById('pin-err').textContent = (resultado && resultado.error) || tr('pinIncorrecto'); return; }
     state.moderatorPin = v;
     await loadTemas(true);
     state.view = 'moderator'; render();
@@ -2352,26 +2352,26 @@ function renderModerator(){
   document.getElementById('nuevo-tema').onclick = () => { state.view='mod-new-tema'; render(); };
   document.getElementById('ajuste-crear').onchange = async (e) => {
     state.workspaceMeta.permitirCrearTemas = e.target.checked;
-    await apiPost('/grupos/' + state.workspaceId + '/ajustes', { permitirCrearTemas: e.target.checked });
+    await apiPost('/grupos/' + state.workspaceId + '/ajustes', { permitirCrearTemas: e.target.checked, pin: state.moderatorPin });
   };
   document.getElementById('ajuste-aprobar').onchange = async (e) => {
     state.workspaceMeta.requiereAprobacion = e.target.checked;
-    await apiPost('/grupos/' + state.workspaceId + '/ajustes', { requiereAprobacion: e.target.checked });
+    await apiPost('/grupos/' + state.workspaceId + '/ajustes', { requiereAprobacion: e.target.checked, pin: state.moderatorPin });
   };
   document.getElementById('ajuste-publico').onchange = async (e) => {
     state.workspaceMeta.publico = e.target.checked;
-    await apiPost('/grupos/' + state.workspaceId + '/ajustes', { publico: e.target.checked });
+    await apiPost('/grupos/' + state.workspaceId + '/ajustes', { publico: e.target.checked, pin: state.moderatorPin });
   };
   document.getElementById('guardar-pin-acceso').onclick = async () => {
     const v = document.getElementById('nuevo-pin-acceso').value.trim();
     const msg = document.getElementById('pin-acceso-msg');
     if(!v){ msg.textContent = tr('modPinAccesoFalta'); return; }
-    const resultado = await apiPost('/grupos/' + state.workspaceId + '/pin-acceso', { pinAcceso: v });
+    const resultado = await apiPost('/grupos/' + state.workspaceId + '/pin-acceso', { pinAcceso: v, pin: state.moderatorPin });
     state.workspaceMeta.tienePinAcceso = !!(resultado && resultado.tienePinAcceso);
     render();
   };
   armarConfirmacionDobleToque(document.getElementById('quitar-pin-acceso'), async () => {
-    await apiPost('/grupos/' + state.workspaceId + '/pin-acceso', { pinAcceso: '' });
+    await apiPost('/grupos/' + state.workspaceId + '/pin-acceso', { pinAcceso: '', pin: state.moderatorPin });
     state.workspaceMeta.tienePinAcceso = false;
     render();
   });
@@ -2477,7 +2477,7 @@ function renderModNewTema(){
       if(!pregunta || opciones.length < 2){ document.getElementById('err').textContent = tr('modNewTemaFaltaEncuesta'); return; }
       encuesta = { pregunta, opciones, multiple: document.getElementById('encuesta-multiple').checked };
     }
-    const resultado = await crearTemaBackend({ titulo, descripcion, encuesta, creadoPor: 'moderador', idioma: state.lang });
+    const resultado = await crearTemaBackend({ titulo, descripcion, encuesta, creadoPor: 'moderador', idioma: state.lang, pin: state.moderatorPin });
     if(!resultado || resultado.error){ document.getElementById('err').textContent = (resultado && resultado.error) || tr('errorGeneracion'); return; }
     await loadTemas(true);
     state.view = 'moderator'; render();
