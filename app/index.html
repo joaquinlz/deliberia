@@ -220,6 +220,7 @@
   #lang-switch .sep{ color: var(--line); cursor:default; }
   @media (max-width:420px){ #lang-switch{ font-size:11px; padding:5px 10px; } }
 </style>
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 </head>
 <body>
 <div id="lang-switch-wrap">
@@ -379,6 +380,7 @@ const I18N = {
   crearBtn: { es:'Crear mi grupo', en:'Create my group' },
   crearFaltaDatos: { es:'Completá el nombre del grupo y un PIN.', en:'Fill in the group name and a PIN.' },
   crearNombreEnUso: { es:'Ya existe un grupo con ese nombre. Elegí otro para evitar confusiones.', en:'A group with that name already exists. Choose another one to avoid confusion.' },
+  crearFaltaVerificacion: { es:'Esperá a que termine la verificación (el recuadro de abajo) antes de crear el grupo.', en:'Wait for the verification box below to finish before creating the group.' },
 
   // Espacio creado
   creadoEyebrow: { es:'¡Listo!', en:'All set!' },
@@ -796,6 +798,7 @@ async function rawStorageDelete(key, shared){
    de IA de claude.ai para todo lo que involucra datos de más de una persona: grupos, temas,
    participantes, mensajes, síntesis, votos y panorama de grupo. */
 const API_BASE = 'https://deliberia-backend.joaquinlocati.workers.dev';
+const TURNSTILE_SITE_KEY = '0x4AAAAAAEjaO-3CEtTHLQ0U';
 async function api(path, options){
   try{
     const res = await fetch(API_BASE + path, options);
@@ -1635,23 +1638,37 @@ function renderCrearEspacio(){
       </div>
       <label class="toggle-row"><input type="checkbox" id="ce-publico" /> ${tr('crearPublicoLabel')}</label>
       <p class="footer-note" style="margin-top:-6px;">${tr('crearPublicoNota')}</p>
+      <div id="ce-turnstile" style="margin-top:12px;"></div>
       <button class="btn btn-primary" id="ce-crear" style="margin-top:8px;">${tr('crearBtn')}</button>
       <div class="err" id="ce-err"></div>
     </div>
   `;
   document.getElementById('back').onclick = () => { state.view='landing'; render(); };
+
+  let turnstileWidgetId = null;
+  (function montarTurnstile(intentos){
+    if(window.turnstile && document.getElementById('ce-turnstile')){
+      turnstileWidgetId = window.turnstile.render('#ce-turnstile', { sitekey: TURNSTILE_SITE_KEY });
+    } else if((intentos || 0) < 50){
+      setTimeout(() => montarTurnstile((intentos || 0) + 1), 200);
+    }
+  })();
+
   document.getElementById('ce-crear').onclick = async () => {
     const nombre = document.getElementById('ce-nombre').value.trim();
     const pin = document.getElementById('ce-pin').value.trim();
     const pinAcceso = document.getElementById('ce-pin-acceso').value.trim();
     if(!nombre || !pin){ document.getElementById('ce-err').textContent = tr('crearFaltaDatos'); return; }
+    const turnstileToken = (window.turnstile && turnstileWidgetId !== null) ? window.turnstile.getResponse(turnstileWidgetId) : '';
+    if(!turnstileToken){ document.getElementById('ce-err').textContent = tr('crearFaltaVerificacion'); return; }
     const btnCrear = document.getElementById('ce-crear');
     btnCrear.disabled = true;
     const publico = document.getElementById('ce-publico').checked;
-    const resultado = await apiPost('/grupos', { nombre, pin, pinAcceso, publico });
+    const resultado = await apiPost('/grupos', { nombre, pin, pinAcceso, publico, turnstileToken });
     if(resultado.error){
       document.getElementById('ce-err').textContent = resultado.error === 'Ya existe un grupo con ese nombre.' ? tr('crearNombreEnUso') : resultado.error;
       btnCrear.disabled = false;
+      if(window.turnstile && turnstileWidgetId !== null) window.turnstile.reset(turnstileWidgetId);
       return;
     }
     state.workspaceId = resultado.codigo;

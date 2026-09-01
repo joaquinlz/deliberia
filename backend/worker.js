@@ -234,6 +234,22 @@ ${contenidoTexto}
 <<<FIN CONTENIDO>>>`;
 }
 
+async function verificarTurnstile(env, token, ip) {
+  if (!env.TURNSTILE_SECRET_KEY) return true;
+  if (!token) return false;
+  try {
+    const resp = await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ secret: env.TURNSTILE_SECRET_KEY, response: token, remoteip: ip || '' })
+    });
+    const data = await resp.json();
+    return !!(data && data.success);
+  } catch (e) {
+    return false;
+  }
+}
+
 async function crearGrupo(env, body) {
   const nombre = (body.nombre || '').trim();
   const pin = (body.pin || '').trim();
@@ -1325,6 +1341,9 @@ async function handleRequest(request, env, ctx) {
     if (url.pathname === '/grupos' && request.method === 'POST') {
       if (!(await chequearLimite(env, `grupo_nuevo:${ip}`, 5, 60 * 60 * 1000))) return respuestaLimiteExcedido();
       const body = await request.json();
+      if (!(await verificarTurnstile(env, body.turnstileToken, ip))) {
+        return Response.json({ error: 'No se pudo verificar que sos una persona real. Recargá la página y probá de nuevo.' }, { status: 400 });
+      }
       const resultado = await crearGrupo(env, body);
       if (resultado.error) return Response.json(resultado, { status: 400 });
       return Response.json(resultado, { status: 201 });
