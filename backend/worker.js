@@ -96,6 +96,9 @@ function slugify(s) {
     .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 30) || 'grupo';
 }
 
+const FRONTEND_URL = 'https://deliberia-app.pages.dev';
+const BACKEND_URL = 'https://deliberia-backend.joaquinlocati.workers.dev';
+
 function extraerTextoIA(respuestaIA) {
   return (
     (respuestaIA.choices && respuestaIA.choices[0] && respuestaIA.choices[0].message && respuestaIA.choices[0].message.content) ||
@@ -288,7 +291,8 @@ async function crearGrupo(env, body) {
     codigo, nombre, publico, creado,
     tienePinAcceso: !!pinAccesoHash,
     permitirCrearTemas: false,
-    requiereAprobacion: true
+    requiereAprobacion: true,
+    requiereRegistro: false
   };
 }
 
@@ -409,8 +413,9 @@ async function traducirTema(env, codigo, temaId, idiomaPedido) {
 }
 
 async function crearParticipante(env, codigo, body) {
-  const grupo = await env.DB.prepare("SELECT codigo FROM grupos WHERE codigo = ?").bind(codigo).first();
+  const grupo = await env.DB.prepare("SELECT codigo, requiere_registro FROM grupos WHERE codigo = ?").bind(codigo).first();
   if (!grupo) return { error: 'No existe ese grupo.' };
+  if (grupo.requiere_registro) return { error: 'Este grupo requiere iniciar sesión con Google para participar.' };
 
   const nombre = (body.nombre || '').trim();
   if (!nombre) return { error: 'Falta el nombre.' };
@@ -428,6 +433,107 @@ async function crearParticipante(env, codigo, body) {
   ).bind(id, codigo, nombre, creado).run();
 
   return { id, nombre, grupo_codigo: codigo, creado };
+}
+
+// --- Login con Google (opcional, por grupo) ---
+// El usuario registrado se identifica por su cuenta de Google (usuarios), y cada dispositivo
+// donde inicia sesión guarda un token de sesión propio (sesiones) que apunta a ese usuario —
+// así puede loguearse desde varios dispositivos sin compartir el mismo token.
+// Dentro de cada grupo, un usuario registrado tiene a lo sumo un participante propio
+// (participantes.usuario_id), que se reutiliza cada vez que vuelve a entrar a ese grupo.
+
+async function obtenerUsuarioDeSesion(env, token) {
+  if (!token) return null;
+  const hash = await hashPin(token);
+  const row = await env.DB.prepare(
+    "SELECT s.usuario_id AS id, u.email, u.nombre FROM sesiones s JOIN usuarios u ON u.id = s.usuario_id WHERE s.token_hash = ? AND s.expira > ?"
+  ).bind(hash, Date.now()).first();
+  return row || null;
+}
+
+async function intercambiarCodigoGoogle(env, code, redirectUri) {
+  const tokenResp = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      code,
+      client_id: env.GOOGLE_CLIENT_ID,
+      client_secret: env.GOOGLE_CLIENT_SECRET,
+      redirect_uri: redirectUri,
+      grant_type: 'authorization_code'
+    })
+  });
+  const tokenData = await tokenResp.json();
+  if (!tokenData.access_token) throw new Error('sin access_token de Google');
+
+  const infoResp = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+    headers: { Authorization: 'Bearer ' + tokenData.access_token }
+  });
+  const info = await infoResp.json();
+  if (!info.sub || !info.email) throw new Error('sin datos de usuario de Google');
+  return info;
+}
+
+async function iniciarSesionConGoogle(env, code, redirectUri) {
+  const info = await intercambiarCodigoGoogle(env, code, redirectUri);
+
+  let usuario = await env.DB.prepare("SELECT id FROM usuarios WHERE google_sub = ?").bind(info.sub).first();
+  let usuarioId;
+  if (usuario) {
+    usuarioId = usuario.id;
+    await env.DB.prepare("UPDATE usuarios SET email = ?, nombre = ? WHERE id = ?")
+      .bind(info.email, info.name || info.email, usuarioId).run();
+  } else {
+    usuarioId = crypto.randomUUID();
+    await env.DB.prepare("INSERT INTO usuarios (id, google_sub, email, nombre, creado) VALUES (?, ?, ?, ?, ?)")
+      .bind(usuarioId, info.sub, info.email, info.name || info.email, Date.now()).run();
+  }
+
+  const token = crypto.randomUUID() + crypto.randomUUID();
+  const tokenHash = await hashPin(token);
+  const creado = Date.now();
+  const expira = creado + 90 * 24 * 60 * 60 * 1000;
+  await env.DB.prepare("INSERT INTO sesiones (token_hash, usuario_id, creado, expira) VALUES (?, ?, ?, ?)")
+    .bind(tokenHash, usuarioId, creado, expira).run();
+
+  return token;
+}
+
+async function cerrarSesion(env, token) {
+  if (!token) return;
+  const hash = await hashPin(token);
+  await env.DB.prepare("DELETE FROM sesiones WHERE token_hash = ?").bind(hash).run();
+}
+
+async function participanteDesdeSesion(env, codigo, token) {
+  const sesion = await obtenerUsuarioDeSesion(env, token);
+  if (!sesion) return { error: 'Sesión inválida o vencida. Iniciá sesión de nuevo.' };
+
+  const grupo = await env.DB.prepare("SELECT codigo FROM grupos WHERE codigo = ?").bind(codigo).first();
+  if (!grupo) return { error: 'No existe ese grupo.' };
+
+  const existente = await env.DB.prepare(
+    "SELECT id, nombre FROM participantes WHERE grupo_codigo = ? AND usuario_id = ?"
+  ).bind(codigo, sesion.id).first();
+  if (existente) return { id: existente.id, nombre: existente.nombre, grupo_codigo: codigo, registrado: true };
+
+  const nombreBase = (sesion.nombre || sesion.email || 'Participante').trim().slice(0, 60);
+  let nombre = nombreBase;
+  for (let sufijo = 2; sufijo <= 20; sufijo++) {
+    const choque = await env.DB.prepare(
+      "SELECT id FROM participantes WHERE grupo_codigo = ? AND lower(nombre) = lower(?)"
+    ).bind(codigo, nombre).first();
+    if (!choque) break;
+    nombre = `${nombreBase} (${sufijo})`;
+  }
+
+  const id = crypto.randomUUID();
+  const creado = Date.now();
+  await env.DB.prepare(
+    "INSERT INTO participantes (id, grupo_codigo, nombre, creado, usuario_id) VALUES (?, ?, ?, ?, ?)"
+  ).bind(id, codigo, nombre, creado, sesion.id).run();
+
+  return { id, nombre, grupo_codigo: codigo, creado, registrado: true };
 }
 
 function promptSistemaChat(tema, nombreParticipante, idioma) {
@@ -1035,6 +1141,7 @@ async function actualizarAjustes(env, codigo, body, ip) {
   if (body.publico !== undefined) { campos.push('publico = ?'); valores.push(body.publico ? 1 : 0); }
   if (body.permitirCrearTemas !== undefined) { campos.push('permitir_crear_temas = ?'); valores.push(body.permitirCrearTemas ? 1 : 0); }
   if (body.requiereAprobacion !== undefined) { campos.push('requiere_aprobacion = ?'); valores.push(body.requiereAprobacion ? 1 : 0); }
+  if (body.requiereRegistro !== undefined) { campos.push('requiere_registro = ?'); valores.push(body.requiereRegistro ? 1 : 0); }
   if (campos.length === 0) return { error: 'Nada para actualizar.' };
 
   valores.push(codigo);
@@ -1391,6 +1498,14 @@ async function handleRequest(request, env, ctx) {
       return Response.json(resultado, { status: 201 });
     }
 
+    if (url.pathname.startsWith('/grupos/') && url.pathname.endsWith('/participantes/yo') && request.method === 'POST') {
+      const codigo = url.pathname.split('/')[2];
+      const body = await request.json().catch(() => ({}));
+      const resultado = await participanteDesdeSesion(env, codigo, body.token);
+      if (resultado.error) return Response.json(resultado, { status: 400 });
+      return Response.json(resultado, { status: 201 });
+    }
+
     if (url.pathname.startsWith('/grupos/') && url.pathname.endsWith('/temas') && request.method === 'POST') {
       const codigo = url.pathname.split('/')[2];
       const body = await request.json();
@@ -1528,7 +1643,7 @@ async function handleRequest(request, env, ctx) {
     if (url.pathname.startsWith('/grupos/') && request.method === 'GET') {
       const codigo = url.pathname.split('/')[2];
       const grupo = await env.DB.prepare(
-        "SELECT codigo, nombre, publico, creado, pin_acceso_hash, permitir_crear_temas, requiere_aprobacion FROM grupos WHERE codigo = ?"
+        "SELECT codigo, nombre, publico, creado, pin_acceso_hash, permitir_crear_temas, requiere_aprobacion, requiere_registro FROM grupos WHERE codigo = ?"
       ).bind(codigo).first();
       if (!grupo) return Response.json({ error: 'No existe ese grupo.' }, { status: 404 });
       return Response.json({
@@ -1538,7 +1653,8 @@ async function handleRequest(request, env, ctx) {
         creado: grupo.creado,
         tienePinAcceso: !!grupo.pin_acceso_hash,
         permitirCrearTemas: !!grupo.permitir_crear_temas,
-        requiereAprobacion: !!grupo.requiere_aprobacion
+        requiereAprobacion: !!grupo.requiere_aprobacion,
+        requiereRegistro: !!grupo.requiere_registro
       });
     }
 
@@ -1631,6 +1747,32 @@ async function handleRequest(request, env, ctx) {
       const resultado = await traducirSintesisSoporte(env, body.idioma);
       if (resultado.error) return Response.json(resultado, { status: 400 });
       return Response.json(resultado);
+    }
+
+    if (url.pathname === '/auth/google/callback' && request.method === 'GET') {
+      const code = url.searchParams.get('code');
+      const state = url.searchParams.get('state') || '';
+      if (!code) return Response.redirect(`${FRONTEND_URL}/?authError=1`, 302);
+      try {
+        const token = await iniciarSesionConGoogle(env, code, `${BACKEND_URL}/auth/google/callback`);
+        const destino = `${FRONTEND_URL}/?authToken=${encodeURIComponent(token)}&authState=${encodeURIComponent(state)}`;
+        return Response.redirect(destino, 302);
+      } catch (e) {
+        return Response.redirect(`${FRONTEND_URL}/?authError=1`, 302);
+      }
+    }
+
+    if (url.pathname === '/auth/me' && request.method === 'GET') {
+      const token = url.searchParams.get('token') || '';
+      const sesion = await obtenerUsuarioDeSesion(env, token);
+      if (!sesion) return Response.json({ error: 'Sesión inválida o vencida.' }, { status: 401 });
+      return Response.json({ email: sesion.email, nombre: sesion.nombre });
+    }
+
+    if (url.pathname === '/auth/logout' && request.method === 'POST') {
+      const body = await request.json().catch(() => ({}));
+      await cerrarSesion(env, body.token);
+      return Response.json({ ok: true });
     }
 
     if (url.pathname === '/admin/verificar-pin' && request.method === 'POST') {

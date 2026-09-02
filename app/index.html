@@ -242,7 +242,8 @@ let state = {
   temas: [],
   temaActual: null,
   participantName: '', participantId: null, messages: [], groupContextText: '',
-  busy: false, error: '', synth: null, count: 0
+  busy: false, error: '', synth: null, count: 0,
+  authToken: null, authUserInfo: null
 };
 
 /* ---------- IDIOMA (ES/EN) ----------
@@ -402,6 +403,12 @@ const I18N = {
   pNombreEyebrow: { es:'Antes de empezar', en:'Before we start' },
   pNombreSub: { es:'Vas a usar este nombre en todos los temas de este grupo.', en:'You\'ll use this name across every topic in this group.' },
   pNombreContinuar: { es:'Continuar', en:'Continue' },
+  pRequiereRegistroSub: { es:'Este grupo pide iniciar sesión con Google para participar, así cada opinión queda identificada de forma segura.', en:'This group requires signing in with Google to participate, so every opinion stays securely identified.' },
+  pNombreOGoogle: { es:'¿Preferís que tu historial te siga a cualquier dispositivo? Iniciá sesión con Google en vez de usar un nombre suelto.', en:'Want your history to follow you across devices? Sign in with Google instead of just using a name.' },
+  googleIniciarSesion: { es:'Iniciar sesión con Google', en:'Sign in with Google' },
+  googleConectadoComo: { es:'Conectado/a como ', en:'Signed in as ' },
+  googleCerrarSesion: { es:'Cerrar sesión', en:'Sign out' },
+  googleErrorLogin: { es:'No se pudo completar el inicio de sesión con Google. Probá de nuevo.', en:'Could not complete Google sign-in. Please try again.' },
   pNombreFalta: { es:'Contanos tu nombre para continuar.', en:'Tell us your name to continue.' },
   pNombreEnUso: { es:'Ese nombre ya está en uso en este grupo. Elegí otro.', en:'That name is already taken in this group. Choose another one.' },
   pNombreYaEnUsoEnEsteGrupo: { es:'Ya usás este nombre en otros grupos, pero en este ya está tomado por otra persona. Elegí una pequeña variación.', en:'You already use this name in other groups, but in this one it\'s taken by someone else. Pick a small variation.' },
@@ -507,6 +514,8 @@ const I18N = {
   modAjusteCrear: { es:'Permitir que los participantes propongan temas', en:'Allow participants to propose topics' },
   modAjusteAprobar: { es:'Requerir aprobación antes de publicarlos', en:'Require approval before publishing them' },
   modAjustePublico: { es:'Grupo público (aparece en el directorio, cualquiera puede verlo y sumarse)', en:'Public group (shows up in the directory, anyone can see it and join)' },
+  modAjusteRegistro: { es:'Requerir cuenta de Google para participar', en:'Require a Google account to participate' },
+  modAjusteRegistroNota: { es:'Sin esto, cualquiera puede borrar sus datos del navegador y volver a opinar como si fuera alguien nuevo. Con esto activado, cada persona queda identificada por su cuenta de Google, sin importar el dispositivo.', en:"Without this, anyone can clear their browser data and come back to weigh in again as if they were someone new. With this on, each person is identified by their Google account, no matter the device." },
   modPinAccesoLabel: { es:'PIN de acceso para participantes:', en:'Access PIN for participants:' },
   modPinAccesoConfigurado: { es:'Configurado', en:'Set' },
   modPinAccesoNoConfigurado: { es:'No configurado', en:'Not set' },
@@ -799,6 +808,50 @@ async function rawStorageDelete(key, shared){
    participantes, mensajes, síntesis, votos y panorama de grupo. */
 const API_BASE = 'https://deliberia-backend.joaquinlocati.workers.dev';
 const TURNSTILE_SITE_KEY = '0x4AAAAAAEjaO-3CEtTHLQ0U';
+const GOOGLE_CLIENT_ID = '394008066662-ft4onc16mfp7r2813ebv7d64795uddgk.apps.googleusercontent.com';
+
+/* Login opcional con Google: la identidad vive en el backend (usuarios + sesiones), el
+   token de sesión de este dispositivo se guarda en localStorage sin scope de grupo (a
+   diferencia de "mi-perfil", que sí es por grupo) y viaja explícito en cada request que
+   lo necesita, igual que los PIN — no usamos cookies porque el backend acepta pedidos
+   desde más de un origen (CORS abierto). */
+function iniciarLoginGoogle(){
+  const nonce = (crypto.randomUUID ? crypto.randomUUID() : ('n' + Math.random().toString(36).slice(2)));
+  try{
+    sessionStorage.setItem('deliberia-auth-state', nonce);
+    sessionStorage.setItem('deliberia-auth-return-hash', location.hash || '');
+  }catch(e){}
+  const params = new URLSearchParams({
+    client_id: GOOGLE_CLIENT_ID,
+    redirect_uri: API_BASE + '/auth/google/callback',
+    response_type: 'code',
+    scope: 'openid email profile',
+    state: nonce,
+    prompt: 'select_account'
+  });
+  location.href = 'https://accounts.google.com/o/oauth2/v2/auth?' + params.toString();
+}
+async function cerrarSesionGoogle(){
+  if(state.authToken){ await apiPost('/auth/logout', { token: state.authToken }).catch(() => {}); }
+  state.authToken = null;
+  state.authUserInfo = null;
+  await rawStorageDelete('auth-token', false);
+}
+// Si ya estamos logueados con Google, resuelve (o crea) el participante de este usuario en
+// el grupo actual sin pedirle nombre. Devuelve true si entró así, false si hay que seguir
+// con el flujo normal (nombre suelto, o pedirle que inicie sesión si el grupo lo requiere).
+async function intentarEntrarConGoogle(){
+  if(!state.authToken) return false;
+  const resultado = await apiPost('/grupos/' + state.workspaceId + '/participantes/yo', { token: state.authToken });
+  if(resultado && !resultado.error){
+    state.savedName = resultado.nombre;
+    state.participantId = resultado.id;
+    await storageSet('mi-perfil', JSON.stringify({ name: resultado.nombre, participantId: resultado.id }), false);
+    return true;
+  }
+  await cerrarSesionGoogle();
+  return false;
+}
 async function api(path, options){
   try{
     const res = await fetch(API_BASE + path, options);
@@ -1720,6 +1773,14 @@ function renderAccesoPin(){
     const resultado = await apiPost('/grupos/' + state.workspaceId + '/verificar-pin', { pin: v, tipo: 'acceso' });
     if(!resultado || !resultado.correcto){ document.getElementById('ap-err').textContent = (resultado && resultado.error) || tr('pinIncorrecto'); return; }
     state.accesoDesbloqueado = true;
+    if(await intentarEntrarConGoogle()){
+      await loadTemas();
+      state.view = 'p-topics'; render();
+      return;
+    }
+    if(state.workspaceMeta && state.workspaceMeta.requiereRegistro){
+      state.view = 'p-nombre'; render(); return;
+    }
     const perfilR = await storageGet('mi-perfil', false);
     const perfil = perfilR ? JSON.parse(perfilR.value) : null;
     if(perfil && perfil.name && perfil.participantId){
@@ -1739,12 +1800,14 @@ function renderAccesoPin(){
 
 function renderParticipantNombre(){
   const sugerido = state.nombreSugerido || '';
+  const requiereRegistro = !!(state.workspaceMeta && state.workspaceMeta.requiereRegistro);
   app.innerHTML = `
     <a class="back" id="back">${tr('volver')}</a>
     <p class="eyebrow" style="margin-top:18px;">${tr('pNombreEyebrow')}</p>
     <h1>${tr('comoTeLlamas')}</h1>
-    <p class="sub">${tr('pNombreSub')}</p>
+    <p class="sub">${requiereRegistro ? tr('pRequiereRegistroSub') : tr('pNombreSub')}</p>
     ${sugerido ? `<p class="err">${tr('pNombreYaEnUsoEnEsteGrupo')}</p>` : ''}
+    ${!requiereRegistro ? `
     <div class="card">
       <div class="field">
         <label for="pn-nombre">${tr('tuNombre')}</label>
@@ -1753,25 +1816,32 @@ function renderParticipantNombre(){
       <button class="btn btn-primary" id="pn-continuar">${tr('pNombreContinuar')}</button>
       <div class="err" id="pn-err"></div>
     </div>
+    <p class="footer-note">${tr('pNombreOGoogle')}</p>
+    ` : ''}
+    <button class="btn btn-ghost" id="pn-google">${tr('googleIniciarSesion')}</button>
+    <div class="err" id="pn-google-err"></div>
   `;
   document.getElementById('back').onclick = () => { state.view='role'; render(); };
-  const continuar = async () => {
-    const nombre = document.getElementById('pn-nombre').value.trim();
-    if(!nombre){ document.getElementById('pn-err').textContent = tr('pNombreFalta'); return; }
-    const resultado = await apiPost('/grupos/' + state.workspaceId + '/participantes', { nombre });
-    if(resultado.error){
-      document.getElementById('pn-err').textContent = tr('pNombreEnUso');
-      return;
-    }
-    state.savedName = nombre;
-    state.participantId = resultado.id;
-    await storageSet('mi-perfil', JSON.stringify({ name: nombre, participantId: resultado.id }), false);
-    await rawStorageSet('perfil-global', JSON.stringify({ name: nombre }), false);
-    await loadTemas();
-    state.view = 'p-topics'; render();
-  };
-  document.getElementById('pn-continuar').onclick = continuar;
-  document.getElementById('pn-nombre').addEventListener('keydown', (e) => { if(e.key==='Enter') continuar(); });
+  document.getElementById('pn-google').onclick = () => iniciarLoginGoogle();
+  if(!requiereRegistro){
+    const continuar = async () => {
+      const nombre = document.getElementById('pn-nombre').value.trim();
+      if(!nombre){ document.getElementById('pn-err').textContent = tr('pNombreFalta'); return; }
+      const resultado = await apiPost('/grupos/' + state.workspaceId + '/participantes', { nombre });
+      if(resultado.error){
+        document.getElementById('pn-err').textContent = tr('pNombreEnUso');
+        return;
+      }
+      state.savedName = nombre;
+      state.participantId = resultado.id;
+      await storageSet('mi-perfil', JSON.stringify({ name: nombre, participantId: resultado.id }), false);
+      await rawStorageSet('perfil-global', JSON.stringify({ name: nombre }), false);
+      await loadTemas();
+      state.view = 'p-topics'; render();
+    };
+    document.getElementById('pn-continuar').onclick = continuar;
+    document.getElementById('pn-nombre').addEventListener('keydown', (e) => { if(e.key==='Enter') continuar(); });
+  }
 }
 
 function renderRole(){
@@ -1791,6 +1861,7 @@ function renderRole(){
     <p class="footer-note">${tr('rolePermiso')}</p>
 
     <div class="mod-access">
+      ${state.authToken && state.authUserInfo ? `<p class="footer-note">${tr('googleConectadoComo')}${esc(state.authUserInfo.nombre || state.authUserInfo.email)} · <a class="back" id="google-logout" style="display:inline;">${tr('googleCerrarSesion')}</a></p>` : ''}
       <a class="back" id="go-moderator">${tr('roleModerador')}</a>
       <br/><a class="back" id="go-acerca" style="margin-top:10px; display:inline-block;">${tr('landAcercaDe')}</a>
       <br/><a class="back" id="go-landing" style="margin-top:10px; display:inline-block;">${tr('roleCambiarGrupo')}</a>
@@ -1799,6 +1870,14 @@ function renderRole(){
   document.getElementById('go-participant').onclick = async () => {
     if(state.workspaceMeta && state.workspaceMeta.tienePinAcceso && !state.accesoDesbloqueado){
       state.view = 'p-acceso-pin'; render(); return;
+    }
+    if(await intentarEntrarConGoogle()){
+      await loadTemas();
+      state.view = 'p-topics'; render();
+      return;
+    }
+    if(state.workspaceMeta && state.workspaceMeta.requiereRegistro){
+      state.view = 'p-nombre'; render(); return;
     }
     const perfilR = await storageGet('mi-perfil', false);
     const perfil = perfilR ? JSON.parse(perfilR.value) : null;
@@ -1816,6 +1895,8 @@ function renderRole(){
   document.getElementById('go-moderator').onclick = () => { state.view = 'mod-pin'; render(); };
   document.getElementById('go-acerca').onclick = () => { state.view = 'acerca'; render(); };
   document.getElementById('go-landing').onclick = () => { location.hash = ''; state.workspaceId = null; state.workspaceMeta = null; state.view = 'landing'; render(); };
+  const logoutBtn = document.getElementById('google-logout');
+  if(logoutBtn) logoutBtn.onclick = async () => { await cerrarSesionGoogle(); render(); };
 }
 
 /* ---------- PARTICIPANT: TOPIC LIST ---------- */
@@ -2237,7 +2318,7 @@ function renderParticipantDone(){
     <button class="btn btn-ghost" id="restart">${tr('pDoneVolver')}</button>
   `;
   document.getElementById('restart').onclick = () => {
-    state = { view:'role', lang: state.lang, temas:[], temaActual:null, participantName:'', participantId:null, messages:[], groupContextText:'', busy:false, error:'', synth:null, count:0 };
+    state = { view:'role', lang: state.lang, temas:[], temaActual:null, participantName:'', participantId:null, messages:[], groupContextText:'', busy:false, error:'', synth:null, count:0, authToken: state.authToken, authUserInfo: state.authUserInfo };
     render();
   };
 }
@@ -2332,6 +2413,8 @@ function renderModerator(){
       <label class="toggle-row"><input type="checkbox" id="ajuste-crear" ${state.workspaceMeta.permitirCrearTemas ? 'checked' : ''} /> ${tr('modAjusteCrear')}</label>
       <label class="toggle-row"><input type="checkbox" id="ajuste-aprobar" ${state.workspaceMeta.requiereAprobacion ? 'checked' : ''} /> ${tr('modAjusteAprobar')}</label>
       <label class="toggle-row"><input type="checkbox" id="ajuste-publico" ${state.workspaceMeta.publico ? 'checked' : ''} /> ${tr('modAjustePublico')}</label>
+      <label class="toggle-row"><input type="checkbox" id="ajuste-registro" ${state.workspaceMeta.requiereRegistro ? 'checked' : ''} /> ${tr('modAjusteRegistro')}</label>
+      <p class="footer-note" style="margin-top:-6px;">${tr('modAjusteRegistroNota')}</p>
       <hr class="divider" />
       <label>${tr('modPinAccesoLabel')} <b style="color:${state.workspaceMeta.tienePinAcceso ? 'var(--teal)' : 'var(--ink-dim)'};">${state.workspaceMeta.tienePinAcceso ? tr('modPinAccesoConfigurado') : tr('modPinAccesoNoConfigurado')}</b></label>
       <div class="field">
@@ -2378,6 +2461,10 @@ function renderModerator(){
   document.getElementById('ajuste-publico').onchange = async (e) => {
     state.workspaceMeta.publico = e.target.checked;
     await apiPost('/grupos/' + state.workspaceId + '/ajustes', { publico: e.target.checked, pin: state.moderatorPin });
+  };
+  document.getElementById('ajuste-registro').onchange = async (e) => {
+    state.workspaceMeta.requiereRegistro = e.target.checked;
+    await apiPost('/grupos/' + state.workspaceId + '/ajustes', { requiereRegistro: e.target.checked, pin: state.moderatorPin });
   };
   document.getElementById('guardar-pin-acceso').onclick = async () => {
     const v = document.getElementById('nuevo-pin-acceso').value.trim();
@@ -2719,6 +2806,37 @@ async function boot(){
   document.documentElement.lang = state.lang;
   document.title = tr('docTitle');
   pintarLangSwitch();
+
+  // Si venimos de vuelta del login con Google, el backend nos manda el token acá por la URL.
+  const paramsUrl = new URLSearchParams(location.search);
+  const authToken = paramsUrl.get('authToken');
+  const authState = paramsUrl.get('authState');
+  const authError = paramsUrl.get('authError');
+  if(authToken || authError){
+    let esperado = '', hashPrevio = '';
+    try{
+      esperado = sessionStorage.getItem('deliberia-auth-state') || '';
+      hashPrevio = sessionStorage.getItem('deliberia-auth-return-hash') || '';
+      sessionStorage.removeItem('deliberia-auth-state');
+      sessionStorage.removeItem('deliberia-auth-return-hash');
+    }catch(e){}
+    if(authToken && authState && authState === esperado){
+      await rawStorageSet('auth-token', authToken, false);
+    } else if(authError){
+      state.errorLanding = tr('googleErrorLogin');
+    }
+    history.replaceState(null, '', location.pathname + hashPrevio);
+  }
+
+  const tokenR = await rawStorageGet('auth-token', false);
+  if(tokenR && tokenR.value){
+    try{
+      const info = await fetch(API_BASE + '/auth/me?token=' + encodeURIComponent(tokenR.value)).then(r => r.json());
+      if(info && !info.error){ state.authToken = tokenR.value; state.authUserInfo = info; }
+      else { await rawStorageDelete('auth-token', false); }
+    }catch(e){}
+  }
+
   const codigo = decodeURIComponent((location.hash || '').replace(/^#/, '')).trim();
   if(codigo){
     const meta = await apiGet('/grupos/' + encodeURIComponent(codigo));
