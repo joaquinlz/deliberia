@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Política de Privacidad — DeliberIA</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Inter:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg: #12212B;
+    --bg-raised: #172A35;
+    --ink: #EFE8DA;
+    --ink-dim: #9FB0B4;
+    --gold: #C9A24B;
+    --teal: #5FA8A0;
+    --line: rgba(239,232,218,0.14);
+  }
+  *{ box-sizing:border-box; }
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font-family:'Inter', sans-serif; line-height:1.6; font-size:15px;
+  }
+  .wrap{ max-width:720px; margin:0 auto; padding:48px 24px 80px; }
+  a{ color:var(--teal); }
+  .eyebrow{ font-family:'IBM Plex Mono', monospace; font-size:12px; letter-spacing:.14em; color:var(--teal); text-transform:uppercase; margin:0; }
+  h1{ font-family:'Fraunces', serif; font-weight:700; font-size:36px; line-height:1.1; margin:10px 0 6px; }
+  .sub{ color:var(--ink-dim); margin:0 0 36px; }
+  h2{ font-family:'Fraunces', serif; font-weight:600; font-size:21px; color:var(--gold); margin:36px 0 10px; }
+  p, li{ color:var(--ink); text-align:justify; }
+  ul{ padding-left:20px; }
+  .card{ background:var(--bg-raised); border:1px solid var(--line); border-radius:14px; padding:20px 22px; margin:18px 0; }
+  .back{ font-family:'IBM Plex Mono', monospace; font-size:12px; letter-spacing:.05em; color:var(--ink-dim); text-decoration:none; }
+  .back:hover{ color:var(--teal); }
+  .footer-note{ color:var(--ink-dim); font-size:13px; margin-top:48px; border-top:1px solid var(--line); padding-top:18px; }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <a class="back" href="/">&larr; Volver a DeliberIA</a>
+    <p class="eyebrow" style="margin-top:18px;">DeliberIA</p>
+    <h1>Política de Privacidad</h1>
+    <p class="sub">Última actualización: septiembre de 2026. Escrita en criollo, no en legalés — si algo no queda claro, escribinos.</p>
+
+    <h2>Qué datos guardamos</h2>
+    <p>Cuando participás en un grupo de DeliberIA, guardamos:</p>
+    <ul>
+      <li>El nombre que elegís mostrar dentro de ese grupo (o tu nombre de Google, si elegís iniciar sesión con Google en vez de escribir un nombre).</li>
+      <li>Lo que escribís en tus conversaciones con la IA sobre cada tema, y las síntesis que se generan a partir de eso.</li>
+      <li>Tus votos en las encuestas de cada tema.</li>
+      <li>Si iniciás sesión con Google: tu dirección de email y tu nombre de cuenta de Google, para poder reconocerte si volvés a entrar desde otro dispositivo.</li>
+    </ul>
+    <p>Nada de esto es anónimo puertas adentro del grupo: como en una asamblea presencial, cada opinión queda asociada al nombre de quien la dijo, visible para cualquier otra persona de ese mismo grupo. Ese es el modelo de transparencia de la herramienta, no un descuido.</p>
+
+    <h2>Qué NO hacemos</h2>
+    <ul>
+      <li>No vendemos ni compartimos tus datos con terceros para publicidad.</li>
+      <li>No usamos rastreadores de analítica ni de publicidad.</li>
+      <li>No mostramos tus opiniones fuera del grupo donde las escribiste, salvo que ese grupo esté marcado como público por su moderador/a (en cuyo caso el panorama general del grupo es visible para cualquiera, igual que lo sería en una asamblea abierta).</li>
+    </ul>
+
+    <h2>Con qué proveedores externos trabajamos</h2>
+    <div class="card">
+      <p><b>Cloudflare</b> — aloja toda la aplicación y la base de datos, y procesa las conversaciones con inteligencia artificial (Cloudflare Workers AI).</p>
+      <p><b>Google</b> — solo si elegís iniciar sesión con tu cuenta de Google en vez de escribir un nombre suelto. Si no usás esa opción, Google nunca recibe nada de tu actividad en DeliberIA.</p>
+      <p style="margin-bottom:0;"><b>Tavily</b> — solo si activás la herramienta "Búsqueda web" dentro de una charla puntual: en ese caso, el mensaje que escribiste en ese momento se manda como consulta de búsqueda a este proveedor.</p>
+    </div>
+
+    <h2>Datos técnicos</h2>
+    <p>Guardamos brevemente tu dirección IP en algunas acciones (crear un grupo, enviar mensajes, intentar un PIN) únicamente para frenar abuso automatizado — por ejemplo, que un script cree cientos de grupos falsos o fuerce un PIN por fuerza bruta. No se usa para identificarte ni para ningún otro fin, y se descarta solo, sin intervención humana.</p>
+
+    <h2>Cuánto tiempo guardamos los datos</h2>
+    <p>Mientras el grupo exista. Un grupo se borra si su moderador/a lo elimina, o si el administrador del sitio lo da de baja (por ejemplo, por abuso). Si querés que se borren tus datos de un grupo puntual, pedíselo a quien lo modera o escribinos directamente.</p>
+
+    <h2>Menores de edad</h2>
+    <p>DeliberIA no está pensada específicamente para menores de 13 años y no solicita deliberadamente datos de niños.</p>
+
+    <h2>Cambios a esta política</h2>
+    <p>Si esto cambia de forma relevante, lo vamos a reflejar acá con la fecha actualizada arriba.</p>
+
+    <h2>Contacto</h2>
+    <p>Cualquier duda sobre tus datos, escribinos a <a href="mailto:joaquinlocati@gmail.com">joaquinlocati@gmail.com</a>.</p>
+
+    <p class="footer-note">DeliberIA es un proyecto gratuito y de código abierto. Este documento describe cómo funciona <em>esta</em> versión, alojada por su autor original — quien descargue el código y lo aloje por su cuenta es responsable de su propia política de privacidad.</p>
+  </div>
+</body>
+</html>

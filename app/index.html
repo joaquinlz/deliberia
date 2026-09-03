@@ -630,6 +630,8 @@ const I18N = {
   acercaResponsabilidadTitulo: { es:'Responsabilidad de uso', en:'Usage responsibility' },
   acercaResponsabilidadTexto1: { es:'DeliberIA se ofrece de forma gratuita y abierta. No se garantiza que esté libre de errores ni que funcione perfectamente para cada caso de uso — se comparte así, con sus límites, para que cualquiera pueda usarlo, revisarlo y mejorarlo. Quien crea un grupo es responsable de su propio espacio: de los temas que abre, de cómo modera, y del uso que su comunidad le da. Cada grupo es completamente independiente — no existe una administración central de la herramienta con acceso o control sobre grupos ajenos.', en:'DeliberIA is offered for free and open to anyone. There is no guarantee that it\'s free of bugs or that it will work perfectly for every use case — it\'s shared as is, with its limits, so that anyone can use, review, and improve it. Whoever creates a group is responsible for their own space: the topics they open, how they moderate, and how their community uses it. Each group is completely independent — there is no central administration of the tool with access or control over other groups.' },
   acercaResponsabilidadTexto2: { es:'Mientras la app funcione conectada al modelo de IA que corre en Cloudflare (como ocurre en esta versión), ese uso queda sujeto a las políticas de uso de ese proveedor, sin importar la interfaz particular que lo presente. Quien descargue este código y lo conecte a otro proveedor de IA, o lo aloje por su cuenta, asume la responsabilidad legal y ética de ese uso bajo su propia jurisdicción — el autor original de este código no se hace responsable por usos indebidos de versiones modificadas o alojadas por terceros.', en:'As long as the app runs connected to the AI model running on Cloudflare (as is the case in this version), that use is subject to that provider\'s usage policies, regardless of the particular interface presenting it. Anyone who downloads this code and connects it to another AI provider, or hosts it themselves, takes on the legal and ethical responsibility for that use under their own jurisdiction — the original author of this code is not responsible for misuse of modified versions or versions hosted by third parties.' },
+  acercaPrivacidad: { es:'Política de Privacidad', en:'Privacy Policy' },
+  acercaTerminos: { es:'Términos de Servicio', en:'Terms of Service' },
 };
 
 function tr(key){
@@ -1410,6 +1412,7 @@ function renderAcerca(){
       <h3 style="font-family:'Fraunces',serif; color:var(--gold); margin-top:0;">${tr('acercaResponsabilidadTitulo')}</h3>
       <p style="font-size:14.5px; line-height:1.6; color:var(--ink); text-align:justify;">${tr('acercaResponsabilidadTexto1')}</p>
       <p style="font-size:14.5px; line-height:1.6; color:var(--ink); text-align:justify;">${tr('acercaResponsabilidadTexto2')}</p>
+      <p style="font-size:14.5px; margin-top:14px;"><a href="/privacidad" target="_blank" rel="noopener">${tr('acercaPrivacidad')}</a> · <a href="/terminos" target="_blank" rel="noopener">${tr('acercaTerminos')}</a></p>
     </div>
   `;
   document.getElementById('back').onclick = () => { state.view = state.workspaceId ? 'role' : 'landing'; render(); };
