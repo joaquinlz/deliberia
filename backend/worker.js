@@ -505,7 +505,7 @@ async function cerrarSesion(env, token) {
   await env.DB.prepare("DELETE FROM sesiones WHERE token_hash = ?").bind(hash).run();
 }
 
-async function participanteDesdeSesion(env, codigo, token) {
+async function participanteDesdeSesion(env, codigo, token, nombreDeseado) {
   const sesion = await obtenerUsuarioDeSesion(env, token);
   if (!sesion) return { error: 'Sesión inválida o vencida. Iniciá sesión de nuevo.' };
 
@@ -517,15 +517,19 @@ async function participanteDesdeSesion(env, codigo, token) {
   ).bind(codigo, sesion.id).first();
   if (existente) return { id: existente.id, nombre: existente.nombre, grupo_codigo: codigo, registrado: true };
 
-  const nombreBase = (sesion.nombre || sesion.email || 'Participante').trim().slice(0, 60);
-  let nombre = nombreBase;
-  for (let sufijo = 2; sufijo <= 20; sufijo++) {
-    const choque = await env.DB.prepare(
-      "SELECT id FROM participantes WHERE grupo_codigo = ? AND lower(nombre) = lower(?)"
-    ).bind(codigo, nombre).first();
-    if (!choque) break;
-    nombre = `${nombreBase} (${sufijo})`;
+  // Primera vez de este usuario en este grupo: no lo creamos con el nombre de Google
+  // directo — le devolvemos el sugerido para que el frontend le deje confirmarlo o
+  // cambiarlo (puede usar un seudónimo) antes de crear el participante.
+  if (!nombreDeseado) {
+    return { nuevoParaEsteGrupo: true, nombreSugerido: (sesion.nombre || sesion.email || '').trim().slice(0, 60) };
   }
+
+  const nombre = nombreDeseado.trim().slice(0, 60);
+  if (!nombre) return { error: 'Falta el nombre.' };
+  const choque = await env.DB.prepare(
+    "SELECT id FROM participantes WHERE grupo_codigo = ? AND lower(nombre) = lower(?)"
+  ).bind(codigo, nombre).first();
+  if (choque) return { error: 'Ese nombre ya está en uso en este grupo.' };
 
   const id = crypto.randomUUID();
   const creado = Date.now();
@@ -1501,7 +1505,7 @@ async function handleRequest(request, env, ctx) {
     if (url.pathname.startsWith('/grupos/') && url.pathname.endsWith('/participantes/yo') && request.method === 'POST') {
       const codigo = url.pathname.split('/')[2];
       const body = await request.json().catch(() => ({}));
-      const resultado = await participanteDesdeSesion(env, codigo, body.token);
+      const resultado = await participanteDesdeSesion(env, codigo, body.token, body.nombre);
       if (resultado.error) return Response.json(resultado, { status: 400 });
       return Response.json(resultado, { status: 201 });
     }

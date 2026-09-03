@@ -404,6 +404,7 @@ const I18N = {
   pNombreSub: { es:'Vas a usar este nombre en todos los temas de este grupo.', en:'You\'ll use this name across every topic in this group.' },
   pNombreContinuar: { es:'Continuar', en:'Continue' },
   pRequiereRegistroSub: { es:'Este grupo pide iniciar sesión con Google para participar, así cada opinión queda identificada de forma segura.', en:'This group requires signing in with Google to participate, so every opinion stays securely identified.' },
+  pNombreSubGoogle: { es:'Ya iniciaste sesión con Google. Elegí cómo te van a ver los demás en este grupo — no hace falta que sea tu nombre real ni el de tu cuenta de Google, podés usar un seudónimo.', en:"You're signed in with Google. Choose how others will see you in this group — it doesn't have to be your real name or your Google account name, a pseudonym works too." },
   pNombreOGoogle: { es:'¿Preferís que tu historial te siga a cualquier dispositivo? Iniciá sesión con Google en vez de usar un nombre suelto.', en:'Want your history to follow you across devices? Sign in with Google instead of just using a name.' },
   googleIniciarSesion: { es:'Iniciar sesión con Google', en:'Sign in with Google' },
   googleConectadoComo: { es:'Conectado/a como ', en:'Signed in as ' },
@@ -842,17 +843,25 @@ async function cerrarSesionGoogle(){
 // Si ya estamos logueados con Google, resuelve (o crea) el participante de este usuario en
 // el grupo actual sin pedirle nombre. Devuelve true si entró así, false si hay que seguir
 // con el flujo normal (nombre suelto, o pedirle que inicie sesión si el grupo lo requiere).
+// Devuelve 'entro' (ya tiene participante en este grupo, listo para ir a p-topics),
+// 'elegir-nombre' (primera vez acá con esta cuenta: hay que confirmar/cambiar el nombre
+// para este grupo antes de crear el participante) o 'no-logueado' (no hay sesión, o quedó
+// vencida y hay que seguir con el flujo normal).
 async function intentarEntrarConGoogle(){
-  if(!state.authToken) return false;
+  if(!state.authToken) return 'no-logueado';
   const resultado = await apiPost('/grupos/' + state.workspaceId + '/participantes/yo', { token: state.authToken });
+  if(resultado && resultado.nuevoParaEsteGrupo){
+    state.nombreSugerido = resultado.nombreSugerido || '';
+    return 'elegir-nombre';
+  }
   if(resultado && !resultado.error){
     state.savedName = resultado.nombre;
     state.participantId = resultado.id;
     await storageSet('mi-perfil', JSON.stringify({ name: resultado.nombre, participantId: resultado.id }), false);
-    return true;
+    return 'entro';
   }
   await cerrarSesionGoogle();
-  return false;
+  return 'no-logueado';
 }
 async function api(path, options){
   try{
@@ -1776,12 +1785,13 @@ function renderAccesoPin(){
     const resultado = await apiPost('/grupos/' + state.workspaceId + '/verificar-pin', { pin: v, tipo: 'acceso' });
     if(!resultado || !resultado.correcto){ document.getElementById('ap-err').textContent = (resultado && resultado.error) || tr('pinIncorrecto'); return; }
     state.accesoDesbloqueado = true;
-    if(await intentarEntrarConGoogle()){
+    const conGoogle = await intentarEntrarConGoogle();
+    if(conGoogle === 'entro'){
       await loadTemas();
       state.view = 'p-topics'; render();
       return;
     }
-    if(state.workspaceMeta && state.workspaceMeta.requiereRegistro){
+    if(conGoogle === 'elegir-nombre' || (state.workspaceMeta && state.workspaceMeta.requiereRegistro)){
       state.view = 'p-nombre'; render(); return;
     }
     const perfilR = await storageGet('mi-perfil', false);
@@ -1804,13 +1814,15 @@ function renderAccesoPin(){
 function renderParticipantNombre(){
   const sugerido = state.nombreSugerido || '';
   const requiereRegistro = !!(state.workspaceMeta && state.workspaceMeta.requiereRegistro);
+  const conGoogle = !!state.authToken; // ya logueado con Google, solo falta confirmar el nombre para este grupo
+  const mostrarForm = !requiereRegistro || conGoogle;
   app.innerHTML = `
     <a class="back" id="back">${tr('volver')}</a>
     <p class="eyebrow" style="margin-top:18px;">${tr('pNombreEyebrow')}</p>
     <h1>${tr('comoTeLlamas')}</h1>
-    <p class="sub">${requiereRegistro ? tr('pRequiereRegistroSub') : tr('pNombreSub')}</p>
-    ${sugerido ? `<p class="err">${tr('pNombreYaEnUsoEnEsteGrupo')}</p>` : ''}
-    ${!requiereRegistro ? `
+    <p class="sub">${conGoogle ? tr('pNombreSubGoogle') : (requiereRegistro ? tr('pRequiereRegistroSub') : tr('pNombreSub'))}</p>
+    ${(sugerido && !conGoogle) ? `<p class="err">${tr('pNombreYaEnUsoEnEsteGrupo')}</p>` : ''}
+    ${mostrarForm ? `
     <div class="card">
       <div class="field">
         <label for="pn-nombre">${tr('tuNombre')}</label>
@@ -1819,26 +1831,29 @@ function renderParticipantNombre(){
       <button class="btn btn-primary" id="pn-continuar">${tr('pNombreContinuar')}</button>
       <div class="err" id="pn-err"></div>
     </div>
-    <p class="footer-note">${tr('pNombreOGoogle')}</p>
+    ${!conGoogle ? `<p class="footer-note">${tr('pNombreOGoogle')}</p>` : ''}
     ` : ''}
-    <button class="btn btn-ghost" id="pn-google">${tr('googleIniciarSesion')}</button>
+    ${!conGoogle ? `<button class="btn btn-ghost" id="pn-google">${tr('googleIniciarSesion')}</button>` : ''}
     <div class="err" id="pn-google-err"></div>
   `;
   document.getElementById('back').onclick = () => { state.view='role'; render(); };
-  document.getElementById('pn-google').onclick = () => iniciarLoginGoogle();
-  if(!requiereRegistro){
+  const googleBtn = document.getElementById('pn-google');
+  if(googleBtn) googleBtn.onclick = () => iniciarLoginGoogle();
+  if(mostrarForm){
     const continuar = async () => {
       const nombre = document.getElementById('pn-nombre').value.trim();
       if(!nombre){ document.getElementById('pn-err').textContent = tr('pNombreFalta'); return; }
-      const resultado = await apiPost('/grupos/' + state.workspaceId + '/participantes', { nombre });
+      const resultado = conGoogle
+        ? await apiPost('/grupos/' + state.workspaceId + '/participantes/yo', { token: state.authToken, nombre })
+        : await apiPost('/grupos/' + state.workspaceId + '/participantes', { nombre });
       if(resultado.error){
         document.getElementById('pn-err').textContent = tr('pNombreEnUso');
         return;
       }
-      state.savedName = nombre;
+      state.savedName = resultado.nombre || nombre;
       state.participantId = resultado.id;
-      await storageSet('mi-perfil', JSON.stringify({ name: nombre, participantId: resultado.id }), false);
-      await rawStorageSet('perfil-global', JSON.stringify({ name: nombre }), false);
+      await storageSet('mi-perfil', JSON.stringify({ name: state.savedName, participantId: resultado.id }), false);
+      if(!conGoogle) await rawStorageSet('perfil-global', JSON.stringify({ name: state.savedName }), false);
       await loadTemas();
       state.view = 'p-topics'; render();
     };
@@ -1874,12 +1889,13 @@ function renderRole(){
     if(state.workspaceMeta && state.workspaceMeta.tienePinAcceso && !state.accesoDesbloqueado){
       state.view = 'p-acceso-pin'; render(); return;
     }
-    if(await intentarEntrarConGoogle()){
+    const conGoogle = await intentarEntrarConGoogle();
+    if(conGoogle === 'entro'){
       await loadTemas();
       state.view = 'p-topics'; render();
       return;
     }
-    if(state.workspaceMeta && state.workspaceMeta.requiereRegistro){
+    if(conGoogle === 'elegir-nombre' || (state.workspaceMeta && state.workspaceMeta.requiereRegistro)){
       state.view = 'p-nombre'; render(); return;
     }
     const perfilR = await storageGet('mi-perfil', false);
