@@ -254,6 +254,9 @@ async function verificarTurnstile(env, token, ip) {
 }
 
 async function crearGrupo(env, body) {
+  const sesion = await obtenerUsuarioDeSesion(env, body.token);
+  if (!sesion) return { error: 'Necesitás iniciar sesión con Google para crear un grupo.' };
+
   const nombre = (body.nombre || '').trim();
   const pin = (body.pin || '').trim();
   const pinAcceso = (body.pinAcceso || '').trim();
@@ -284,8 +287,8 @@ async function crearGrupo(env, body) {
   const creado = Date.now();
 
   await env.DB.prepare(
-    "INSERT INTO grupos (codigo, nombre, pin_hash, pin_acceso_hash, publico, creado) VALUES (?, ?, ?, ?, ?, ?)"
-  ).bind(codigo, nombre, pinHash, pinAccesoHash, publico ? 1 : 0, creado).run();
+    "INSERT INTO grupos (codigo, nombre, pin_hash, pin_acceso_hash, publico, creado, creador_usuario_id) VALUES (?, ?, ?, ?, ?, ?, ?)"
+  ).bind(codigo, nombre, pinHash, pinAccesoHash, publico ? 1 : 0, creado, sesion.id).run();
 
   return {
     codigo, nombre, publico, creado,
@@ -538,6 +541,38 @@ async function participanteDesdeSesion(env, codigo, token, nombreDeseado) {
   ).bind(id, codigo, nombre, creado, sesion.id).run();
 
   return { id, nombre, grupo_codigo: codigo, creado, registrado: true };
+}
+
+// Grupos creados por el usuario logueado, y cambio de PIN sin necesitar el PIN viejo —
+// la propia sesión de Google (ser quien lo creó) es la verificación.
+async function misGrupos(env, token) {
+  const sesion = await obtenerUsuarioDeSesion(env, token);
+  if (!sesion) return { error: 'Sesión inválida o vencida. Iniciá sesión de nuevo.' };
+
+  const { results } = await env.DB.prepare(
+    `SELECT g.codigo, g.nombre, g.publico, g.creado, COUNT(DISTINCT t.id) AS cantidadTemas
+     FROM grupos g LEFT JOIN temas t ON t.grupo_codigo = g.codigo
+     WHERE g.creador_usuario_id = ?
+     GROUP BY g.codigo
+     ORDER BY g.creado DESC`
+  ).bind(sesion.id).all();
+  return { grupos: results };
+}
+
+async function cambiarPinComoCreador(env, codigo, token, nuevoPin) {
+  const sesion = await obtenerUsuarioDeSesion(env, token);
+  if (!sesion) return { error: 'Sesión inválida o vencida. Iniciá sesión de nuevo.' };
+
+  const grupo = await env.DB.prepare("SELECT creador_usuario_id FROM grupos WHERE codigo = ?").bind(codigo).first();
+  if (!grupo) return { error: 'No existe ese grupo.' };
+  if (grupo.creador_usuario_id !== sesion.id) return { error: 'Este grupo no fue creado con tu cuenta.' };
+
+  const pin = (nuevoPin || '').trim();
+  if (!pin) return { error: 'Falta el PIN nuevo.' };
+
+  const pinHash = await hashPin(pin);
+  await env.DB.prepare("UPDATE grupos SET pin_hash = ? WHERE codigo = ?").bind(pinHash, codigo).run();
+  return { ok: true };
 }
 
 function promptSistemaChat(tema, nombreParticipante, idioma) {
@@ -1440,11 +1475,13 @@ async function handleRequest(request, env, ctx) {
     }
 
     if (url.pathname === '/test-crear-grupo') {
+      const token = url.searchParams.get('token') || '';
       const resultado = await crearGrupo(env, {
         nombre: 'Grupo de prueba',
         pin: '1234',
         pinAcceso: '',
-        publico: false
+        publico: false,
+        token
       });
       return Response.json(resultado);
     }
@@ -1777,6 +1814,24 @@ async function handleRequest(request, env, ctx) {
       const body = await request.json().catch(() => ({}));
       await cerrarSesion(env, body.token);
       return Response.json({ ok: true });
+    }
+
+    if (url.pathname === '/mis-grupos' && request.method === 'GET') {
+      const token = url.searchParams.get('token') || '';
+      const resultado = await misGrupos(env, token);
+      if (resultado.error) return Response.json(resultado, { status: 401 });
+      return Response.json(resultado);
+    }
+
+    {
+      const partesPinCreador = url.pathname.split('/').filter(Boolean);
+      if (partesPinCreador.length === 3 && partesPinCreador[0] === 'grupos' && partesPinCreador[2] === 'pin-por-creador' && request.method === 'POST') {
+        const codigo = partesPinCreador[1];
+        const body = await request.json().catch(() => ({}));
+        const resultado = await cambiarPinComoCreador(env, codigo, body.token, body.nuevoPin);
+        if (resultado.error) return Response.json(resultado, { status: 400 });
+        return Response.json(resultado);
+      }
     }
 
     if (url.pathname === '/admin/verificar-pin' && request.method === 'POST') {

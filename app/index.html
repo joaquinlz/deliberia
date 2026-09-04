@@ -370,6 +370,7 @@ const I18N = {
   // Crear grupo
   crearEyebrow: { es:'Nuevo grupo', en:'New group' },
   crearTitulo: { es:'Creá tu grupo', en:'Create your group' },
+  crearRequiereGoogleSub: { es:'Para crear un grupo pedimos iniciar sesión con Google — así, si alguna vez perdés tu PIN de moderador/a, podés recuperarlo vos mismo desde "Mi perfil", sin depender de nadie más. Los participantes de tu grupo van a poder seguir sumándose sin cuenta, esto es solo para quien crea el espacio.', en:'To create a group we ask you to sign in with Google — that way, if you ever lose your moderator PIN, you can recover it yourself from "My profile", without depending on anyone else. Your group\'s participants can still join without an account — this is only for whoever creates the space.' },
   crearNombreLabel: { es:'Nombre de tu grupo u organización', en:'Name of your group or organization' },
   crearNombrePlaceholder: { es:'Ej: Cooperativa El Sauce', en:'E.g.: Cooperativa El Sauce' },
   crearPinLabel: { es:'Elegí un PIN de moderador/a', en:'Choose a moderator PIN' },
@@ -410,6 +411,16 @@ const I18N = {
   googleConectadoComo: { es:'Conectado/a como ', en:'Signed in as ' },
   googleCerrarSesion: { es:'Cerrar sesión', en:'Sign out' },
   googleErrorLogin: { es:'No se pudo completar el inicio de sesión con Google. Probá de nuevo.', en:'Could not complete Google sign-in. Please try again.' },
+  perfilEyebrow: { es:'Tu cuenta', en:'Your account' },
+  perfilTitulo: { es:'Mi perfil', en:'My profile' },
+  perfilNoLogueadoSub: { es:'Iniciá sesión con Google para ver los grupos que creaste y gestionar su PIN.', en:'Sign in with Google to see the groups you created and manage their PIN.' },
+  perfilMisGruposNota: { es:'Estos son los grupos que creaste con esta cuenta. Podés cambiarles el PIN de moderador/a en cualquier momento, sin necesitar el anterior.', en:"These are the groups you created with this account. You can change their moderator PIN anytime, without needing the old one." },
+  perfilSinGrupos: { es:'Todavía no creaste ningún grupo con esta cuenta.', en:"You haven't created any group with this account yet." },
+  perfilNuevoPinLabel: { es:'PIN nuevo', en:'New PIN' },
+  perfilCambiarPinBtn: { es:'Cambiar PIN', en:'Change PIN' },
+  perfilFaltaPin: { es:'Escribí el PIN nuevo.', en:'Enter the new PIN.' },
+  perfilCambiarPinError: { es:'No se pudo cambiar el PIN. Probá de nuevo.', en:'Could not change the PIN. Please try again.' },
+  perfilCambiarPinOk: { es:'¡Listo! El PIN se actualizó.', en:'Done! The PIN was updated.' },
   pNombreFalta: { es:'Contanos tu nombre para continuar.', en:'Tell us your name to continue.' },
   pNombreEnUso: { es:'Ese nombre ya está en uso en este grupo. Elegí otro.', en:'That name is already taken in this group. Choose another one.' },
   pNombreYaEnUsoEnEsteGrupo: { es:'Ya usás este nombre en otros grupos, pero en este ya está tomado por otra persona. Elegí una pequeña variación.', en:'You already use this name in other groups, but in this one it\'s taken by someone else. Pick a small variation.' },
@@ -1044,6 +1055,7 @@ function render(){
   if(state.view === 'directorio-grupos') return renderDirectorioGrupos();
   if(state.view === 'panorama-grupo-publico') return renderPanoramaGrupoPublico();
   if(state.view === 'espacio-creado') return renderEspacioCreado();
+  if(state.view === 'mi-perfil') return renderMiPerfil();
   if(state.view === 'role') return renderRole();
   if(state.view === 'p-acceso-pin') return renderAccesoPin();
   if(state.view === 'p-nombre') return renderParticipantNombre();
@@ -1489,12 +1501,17 @@ async function renderLanding(){
     </div>
 
     <div class="mod-access">
+      ${state.authToken && state.authUserInfo ? `<p class="footer-note">${tr('googleConectadoComo')}${esc(state.authUserInfo.nombre || state.authUserInfo.email)} · <a class="back" id="ir-mi-perfil" style="display:inline;">${tr('perfilTitulo')}</a> · <a class="back" id="land-logout" style="display:inline;">${tr('googleCerrarSesion')}</a></p>` : ''}
       <a class="back" id="go-acerca">${tr('landAcercaDe')}</a>
       <br/><a class="back" id="go-soporte" style="margin-top:10px; display:inline-block;">${tr('landConsultas')}</a>
     </div>
   `;
   document.getElementById('ir-crear').onclick = () => { state.errorLanding=''; state.view = 'crear-espacio'; render(); };
   document.getElementById('ir-directorio').onclick = () => { state.view = 'directorio-grupos'; render(); };
+  const irMiPerfilBtn = document.getElementById('ir-mi-perfil');
+  if(irMiPerfilBtn) irMiPerfilBtn.onclick = () => { state.view = 'mi-perfil'; render(); };
+  const landLogoutBtn = document.getElementById('land-logout');
+  if(landLogoutBtn) landLogoutBtn.onclick = async () => { await cerrarSesionGoogle(); render(); };
   document.getElementById('go-soporte').onclick = async () => {
     state.soporteMessages = [];
     state.soporteId = null;
@@ -1684,10 +1701,23 @@ function renderPanoramaGrupoContenido(p){
 }
 
 function renderCrearEspacio(){
+  if(!state.authToken){
+    app.innerHTML = `
+      <a class="back" id="back">${tr('volver')}</a>
+      <p class="eyebrow" style="margin-top:18px;">${tr('crearEyebrow')}</p>
+      <h1>${tr('crearTitulo')}</h1>
+      <p class="sub" style="max-width:100%; text-align:justify;">${tr('crearRequiereGoogleSub')}</p>
+      <button class="btn btn-primary btn-cta" id="ce-google">${tr('googleIniciarSesion')}</button>
+    `;
+    document.getElementById('back').onclick = () => { state.view = state.workspaceId ? 'role' : 'landing'; render(); };
+    document.getElementById('ce-google').onclick = () => iniciarLoginGoogle();
+    return;
+  }
   app.innerHTML = `
     <a class="back" id="back">${tr('volver')}</a>
     <p class="eyebrow" style="margin-top:18px;">${tr('crearEyebrow')}</p>
     <h1>${tr('crearTitulo')}</h1>
+    <p class="footer-note">${tr('googleConectadoComo')}${esc(state.authUserInfo ? (state.authUserInfo.nombre || state.authUserInfo.email) : '')}</p>
     <div class="card">
       <div class="field">
         <label for="ce-nombre">${tr('crearNombreLabel')}</label>
@@ -1729,7 +1759,7 @@ function renderCrearEspacio(){
     const btnCrear = document.getElementById('ce-crear');
     btnCrear.disabled = true;
     const publico = document.getElementById('ce-publico').checked;
-    const resultado = await apiPost('/grupos', { nombre, pin, pinAcceso, publico, turnstileToken });
+    const resultado = await apiPost('/grupos', { nombre, pin, pinAcceso, publico, turnstileToken, token: state.authToken });
     if(resultado.error){
       document.getElementById('ce-err').textContent = resultado.error === 'Ya existe un grupo con ese nombre.' ? tr('crearNombreEnUso') : resultado.error;
       btnCrear.disabled = false;
@@ -1762,6 +1792,68 @@ function renderEspacioCreado(){
     <button class="btn btn-primary btn-cta" id="entrar-ahora">${tr('creadoEntrar')}</button>
   `;
   document.getElementById('entrar-ahora').onclick = () => { state.view = 'role'; render(); };
+}
+
+async function renderMiPerfil(){
+  if(!state.authToken){
+    app.innerHTML = `
+      <a class="back" id="back">${tr('volver')}</a>
+      <p class="eyebrow" style="margin-top:18px;">${tr('perfilEyebrow')}</p>
+      <h1>${tr('perfilTitulo')}</h1>
+      <p class="sub">${tr('perfilNoLogueadoSub')}</p>
+      <button class="btn btn-primary btn-cta" id="perfil-google">${tr('googleIniciarSesion')}</button>
+    `;
+    document.getElementById('back').onclick = () => { state.view = state.workspaceId ? 'role' : 'landing'; render(); };
+    document.getElementById('perfil-google').onclick = () => iniciarLoginGoogle();
+    return;
+  }
+  app.innerHTML = `
+    <a class="back" id="back">${tr('volver')}</a>
+    <p class="eyebrow" style="margin-top:18px;">${tr('perfilEyebrow')}</p>
+    <h1>${tr('perfilTitulo')}</h1>
+    <p class="sub">${tr('googleConectadoComo')}${esc(state.authUserInfo ? (state.authUserInfo.nombre || state.authUserInfo.email) : '')}</p>
+    <p class="footer-note">${tr('perfilMisGruposNota')}</p>
+    <div id="perfil-grupos"><p class="empty">${tr('dirCargando')}</p></div>
+  `;
+  document.getElementById('back').onclick = () => { state.view='landing'; render(); };
+
+  const resultado = await apiGet('/mis-grupos?token=' + encodeURIComponent(state.authToken));
+  const cont = document.getElementById('perfil-grupos');
+  if(!cont) return;
+  const grupos = (resultado && resultado.grupos) || [];
+  if(!grupos.length){
+    cont.innerHTML = `<p class="empty">${tr('perfilSinGrupos')}</p>`;
+    return;
+  }
+  cont.innerHTML = grupos.map(g => `
+    <div class="card" style="margin-top:14px;">
+      <div class="row1">
+        <h4>${esc(g.nombre)}</h4>
+        <span class="badge ${g.publico ? 'oficial' : 'pausado'}">${g.publico ? tr('modGruposEsPublico') : tr('modGruposEsPrivado')}</span>
+      </div>
+      <div class="meta"><span>${esc(g.codigo)}</span><span>${fechaCorta(g.creado)}</span><span>${g.cantidadTemas} ${tr('monitoreoTemas')}</span></div>
+      <div class="field" style="margin-top:12px;">
+        <label>${tr('perfilNuevoPinLabel')}</label>
+        <input type="text" class="perfil-nuevo-pin" data-codigo="${esc(g.codigo)}" placeholder="${tr('crearPinPlaceholder')}" maxlength="12" />
+      </div>
+      <button class="btn btn-ghost btn-sm perfil-guardar-pin" data-codigo="${esc(g.codigo)}">${tr('perfilCambiarPinBtn')}</button>
+      <p class="err" data-msg-codigo="${esc(g.codigo)}"></p>
+    </div>
+  `).join('');
+  cont.querySelectorAll('.perfil-guardar-pin').forEach(btn => {
+    btn.onclick = async () => {
+      const codigo = btn.dataset.codigo;
+      const input = cont.querySelector(`.perfil-nuevo-pin[data-codigo="${CSS.escape(codigo)}"]`);
+      const msg = cont.querySelector(`[data-msg-codigo="${CSS.escape(codigo)}"]`);
+      const nuevoPin = input.value.trim();
+      if(!nuevoPin){ msg.textContent = tr('perfilFaltaPin'); return; }
+      const r = await apiPost('/grupos/' + encodeURIComponent(codigo) + '/pin-por-creador', { token: state.authToken, nuevoPin });
+      if(!r || r.error){ msg.textContent = (r && r.error) || tr('perfilCambiarPinError'); return; }
+      msg.textContent = tr('perfilCambiarPinOk');
+      msg.style.color = 'var(--teal)';
+      input.value = '';
+    };
+  });
 }
 
 function renderAccesoPin(){
@@ -1879,7 +1971,7 @@ function renderRole(){
     <p class="footer-note">${tr('rolePermiso')}</p>
 
     <div class="mod-access">
-      ${state.authToken && state.authUserInfo ? `<p class="footer-note">${tr('googleConectadoComo')}${esc(state.authUserInfo.nombre || state.authUserInfo.email)} · <a class="back" id="google-logout" style="display:inline;">${tr('googleCerrarSesion')}</a></p>` : ''}
+      ${state.authToken && state.authUserInfo ? `<p class="footer-note">${tr('googleConectadoComo')}${esc(state.authUserInfo.nombre || state.authUserInfo.email)} · <a class="back" id="ir-mi-perfil" style="display:inline;">${tr('perfilTitulo')}</a> · <a class="back" id="google-logout" style="display:inline;">${tr('googleCerrarSesion')}</a></p>` : ''}
       <a class="back" id="go-moderator">${tr('roleModerador')}</a>
       <br/><a class="back" id="go-acerca" style="margin-top:10px; display:inline-block;">${tr('landAcercaDe')}</a>
       <br/><a class="back" id="go-landing" style="margin-top:10px; display:inline-block;">${tr('roleCambiarGrupo')}</a>
@@ -1916,6 +2008,8 @@ function renderRole(){
   document.getElementById('go-landing').onclick = () => { location.hash = ''; state.workspaceId = null; state.workspaceMeta = null; state.view = 'landing'; render(); };
   const logoutBtn = document.getElementById('google-logout');
   if(logoutBtn) logoutBtn.onclick = async () => { await cerrarSesionGoogle(); render(); };
+  const irMiPerfilBtn = document.getElementById('ir-mi-perfil');
+  if(irMiPerfilBtn) irMiPerfilBtn.onclick = () => { state.view = 'mi-perfil'; render(); };
 }
 
 /* ---------- PARTICIPANT: TOPIC LIST ---------- */
