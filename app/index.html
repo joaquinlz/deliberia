@@ -1501,7 +1501,7 @@ async function renderLanding(){
     </div>
 
     <div class="mod-access">
-      ${state.authToken && state.authUserInfo ? `<p class="footer-note">${tr('googleConectadoComo')}${esc(state.authUserInfo.nombre || state.authUserInfo.email)} · <a class="back" id="ir-mi-perfil" style="display:inline;">${tr('perfilTitulo')}</a> · <a class="back" id="land-logout" style="display:inline;">${tr('googleCerrarSesion')}</a></p>` : ''}
+      ${state.authToken ? `<a class="back" id="ir-mi-perfil">${tr('perfilTitulo')}</a><br/>` : ''}
       <a class="back" id="go-acerca">${tr('landAcercaDe')}</a>
       <br/><a class="back" id="go-soporte" style="margin-top:10px; display:inline-block;">${tr('landConsultas')}</a>
     </div>
@@ -1510,8 +1510,6 @@ async function renderLanding(){
   document.getElementById('ir-directorio').onclick = () => { state.view = 'directorio-grupos'; render(); };
   const irMiPerfilBtn = document.getElementById('ir-mi-perfil');
   if(irMiPerfilBtn) irMiPerfilBtn.onclick = () => { state.view = 'mi-perfil'; render(); };
-  const landLogoutBtn = document.getElementById('land-logout');
-  if(landLogoutBtn) landLogoutBtn.onclick = async () => { await cerrarSesionGoogle(); render(); };
   document.getElementById('go-soporte').onclick = async () => {
     state.soporteMessages = [];
     state.soporteId = null;
@@ -1811,11 +1809,13 @@ async function renderMiPerfil(){
     <a class="back" id="back">${tr('volver')}</a>
     <p class="eyebrow" style="margin-top:18px;">${tr('perfilEyebrow')}</p>
     <h1>${tr('perfilTitulo')}</h1>
-    <p class="sub">${tr('googleConectadoComo')}${esc(state.authUserInfo ? (state.authUserInfo.nombre || state.authUserInfo.email) : '')}</p>
+    <p class="sub">${tr('googleConectadoComo')}${esc(state.authUserInfo ? (state.authUserInfo.nombre || '') : '')}${state.authUserInfo && state.authUserInfo.email ? ` (${esc(state.authUserInfo.email)})` : ''}</p>
+    <button class="btn btn-ghost btn-sm" id="perfil-logout" style="margin-bottom:12px;">${tr('googleCerrarSesion')}</button>
     <p class="footer-note">${tr('perfilMisGruposNota')}</p>
     <div id="perfil-grupos"><p class="empty">${tr('dirCargando')}</p></div>
   `;
-  document.getElementById('back').onclick = () => { state.view='landing'; render(); };
+  document.getElementById('back').onclick = () => { state.view = state.workspaceId ? 'role' : 'landing'; render(); };
+  document.getElementById('perfil-logout').onclick = async () => { await cerrarSesionGoogle(); state.view='landing'; render(); };
 
   const resultado = await apiGet('/mis-grupos?token=' + encodeURIComponent(state.authToken));
   const cont = document.getElementById('perfil-grupos');
@@ -1826,12 +1826,12 @@ async function renderMiPerfil(){
     return;
   }
   cont.innerHTML = grupos.map(g => `
-    <div class="card" style="margin-top:14px;">
+    <div class="tema-item" style="margin-top:14px;">
       <div class="row1">
         <h4>${esc(g.nombre)}</h4>
         <span class="badge ${g.publico ? 'oficial' : 'pausado'}">${g.publico ? tr('modGruposEsPublico') : tr('modGruposEsPrivado')}</span>
       </div>
-      <div class="meta"><span>${esc(g.codigo)}</span><span>${fechaCorta(g.creado)}</span><span>${g.cantidadTemas} ${tr('monitoreoTemas')}</span></div>
+      <div class="meta"><span>${esc(g.codigo)}</span><span>${tr('pTopicsCreado')}${fechaCorta(g.creado)}</span><span>${g.cantidadTemas} ${tr('monitoreoTemas')}</span></div>
       <div class="field" style="margin-top:12px;">
         <label>${tr('perfilNuevoPinLabel')}</label>
         <input type="text" class="perfil-nuevo-pin" data-codigo="${esc(g.codigo)}" placeholder="${tr('crearPinPlaceholder')}" maxlength="12" />
@@ -1971,10 +1971,10 @@ function renderRole(){
     <p class="footer-note">${tr('rolePermiso')}</p>
 
     <div class="mod-access">
-      ${state.authToken && state.authUserInfo ? `<p class="footer-note">${tr('googleConectadoComo')}${esc(state.authUserInfo.nombre || state.authUserInfo.email)} · <a class="back" id="ir-mi-perfil" style="display:inline;">${tr('perfilTitulo')}</a> · <a class="back" id="google-logout" style="display:inline;">${tr('googleCerrarSesion')}</a></p>` : ''}
       <a class="back" id="go-moderator">${tr('roleModerador')}</a>
       <br/><a class="back" id="go-acerca" style="margin-top:10px; display:inline-block;">${tr('landAcercaDe')}</a>
       <br/><a class="back" id="go-landing" style="margin-top:10px; display:inline-block;">${tr('roleCambiarGrupo')}</a>
+      ${state.authToken ? `<br/><a class="back" id="ir-mi-perfil" style="margin-top:10px; display:inline-block;">${tr('perfilTitulo')}</a>` : ''}
     </div>
   `;
   document.getElementById('go-participant').onclick = async () => {
@@ -2006,8 +2006,6 @@ function renderRole(){
   document.getElementById('go-moderator').onclick = () => { state.view = 'mod-pin'; render(); };
   document.getElementById('go-acerca').onclick = () => { state.view = 'acerca'; render(); };
   document.getElementById('go-landing').onclick = () => { location.hash = ''; state.workspaceId = null; state.workspaceMeta = null; state.view = 'landing'; render(); };
-  const logoutBtn = document.getElementById('google-logout');
-  if(logoutBtn) logoutBtn.onclick = async () => { await cerrarSesionGoogle(); render(); };
   const irMiPerfilBtn = document.getElementById('ir-mi-perfil');
   if(irMiPerfilBtn) irMiPerfilBtn.onclick = () => { state.view = 'mi-perfil'; render(); };
 }
