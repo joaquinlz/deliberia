@@ -1222,34 +1222,31 @@ async function eliminarGrupo(env, codigo, body, ip) {
   return { ok: true };
 }
 
-async function verificarPinAdmin(env, pin, ip) {
-  const claveBloqueo = `pinfail:admin:${ip || 'desconocida'}`;
-  if (await pinBloqueado(env, claveBloqueo, 5, 15 * 60 * 1000)) {
-    return { correcto: false, nuevo: false, bloqueado: true, error: 'Demasiados intentos fallidos. Esperá unos minutos y volvé a probar.' };
+// El panel de administración ya no tiene PIN propio: solo la cuenta de Google configurada
+// como ADMIN_EMAIL puede usarlo. La verificación es la misma sesión de Google que ya usamos
+// para todo lo demás — nada que recordar, nada que forzar por fuerza bruta.
+async function esAdminGoogle(env, token) {
+  const sesion = await obtenerUsuarioDeSesion(env, token);
+  if (!sesion) return { error: 'Sesión inválida o vencida. Iniciá sesión de nuevo.' };
+  if (!env.ADMIN_EMAIL || (sesion.email || '').toLowerCase() !== env.ADMIN_EMAIL.toLowerCase()) {
+    return { error: 'No tenés acceso al panel de administración.' };
   }
-  const row = await env.DB.prepare("SELECT pin_hash FROM admin WHERE id = 1").first();
-  if (!row) {
-    const hash = await hashPin(pin || '');
-    await env.DB.prepare("INSERT INTO admin (id, pin_hash) VALUES (1, ?)").bind(hash).run();
-    return { correcto: true, nuevo: true };
-  }
-  const hash = await hashPin(pin || '');
-  const correcto = hash === row.pin_hash;
-  if (!correcto) await registrarFalloPin(env, claveBloqueo, 15 * 60 * 1000);
-  return { correcto, nuevo: false };
+  return { ok: true };
 }
 
-async function eliminarGrupoAdmin(env, codigo, adminPin, ip) {
-  const check = await verificarPinAdmin(env, adminPin, ip);
+async function eliminarGrupoAdmin(env, codigo, token) {
+  const check = await esAdminGoogle(env, token);
   if (check.error) return check;
-  if (!check.correcto) return { error: 'PIN de administración incorrecto.' };
   const grupo = await env.DB.prepare("SELECT codigo FROM grupos WHERE codigo = ?").bind(codigo).first();
   if (!grupo) return { error: 'No existe ese grupo.' };
   await cascadeEliminarGrupo(env, codigo);
   return { ok: true };
 }
 
-async function obtenerMonitoreoAdmin(env) {
+async function obtenerMonitoreoAdmin(env, token) {
+  const check = await esAdminGoogle(env, token);
+  if (check.error) return check;
+
   const totales = await env.DB.prepare(
     `SELECT
        (SELECT COUNT(*) FROM grupos) AS totalGrupos,
@@ -1834,14 +1831,10 @@ async function handleRequest(request, env, ctx) {
       }
     }
 
-    if (url.pathname === '/admin/verificar-pin' && request.method === 'POST') {
-      const body = await request.json();
-      const resultado = await verificarPinAdmin(env, body.pin, ip);
-      return Response.json(resultado, { status: resultado.bloqueado ? 429 : 200 });
-    }
-
     if (url.pathname === '/admin/monitoreo' && request.method === 'GET') {
-      const resultado = await obtenerMonitoreoAdmin(env);
+      const token = url.searchParams.get('token') || '';
+      const resultado = await obtenerMonitoreoAdmin(env, token);
+      if (resultado.error) return Response.json(resultado, { status: 401 });
       return Response.json(resultado);
     }
 
@@ -1850,8 +1843,8 @@ async function handleRequest(request, env, ctx) {
       if (partesAdmin.length === 4 && partesAdmin[0] === 'admin' && partesAdmin[1] === 'grupos' && partesAdmin[3] === 'eliminar' && request.method === 'POST') {
         const codigo = partesAdmin[2];
         const body = await request.json();
-        const resultado = await eliminarGrupoAdmin(env, codigo, body.adminPin, ip);
-        if (resultado.error) return Response.json(resultado, { status: resultado.bloqueado ? 429 : 400 });
+        const resultado = await eliminarGrupoAdmin(env, codigo, body.token);
+        if (resultado.error) return Response.json(resultado, { status: 400 });
         return Response.json(resultado);
       }
     }

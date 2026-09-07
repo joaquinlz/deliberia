@@ -421,6 +421,8 @@ const I18N = {
   perfilFaltaPin: { es:'Escribí el PIN nuevo.', en:'Enter the new PIN.' },
   perfilCambiarPinError: { es:'No se pudo cambiar el PIN. Probá de nuevo.', en:'Could not change the PIN. Please try again.' },
   perfilCambiarPinOk: { es:'¡Listo! El PIN se actualizó.', en:'Done! The PIN was updated.' },
+  perfilPanelAdmin: { es:'Panel de administración', en:'Admin panel' },
+  adminSinAcceso: { es:'No tenés acceso al panel de administración.', en:"You don't have access to the admin panel." },
   pNombreFalta: { es:'Contanos tu nombre para continuar.', en:'Tell us your name to continue.' },
   pNombreEnUso: { es:'Ese nombre ya está en uso en este grupo. Elegí otro.', en:'That name is already taken in this group. Choose another one.' },
   pNombreYaEnUsoEnEsteGrupo: { es:'Ya usás este nombre en otros grupos, pero en este ya está tomado por otra persona. Elegí una pequeña variación.', en:'You already use this name in other groups, but in this one it\'s taken by someone else. Pick a small variation.' },
@@ -596,12 +598,8 @@ const I18N = {
   soporteTitulo: { es:'Hablá con DeliberIA', en:'Talk to DeliberIA' },
   soporteSub: { es:'Preguntá lo que quieras sobre cómo funciona la herramienta, o dejá una sugerencia, crítica o comentario. Es anónimo, no hace falta que digas quién sos.', en:'Ask anything about how the tool works, or leave a suggestion, criticism, or comment. It\'s anonymous — you don\'t need to say who you are.' },
   soportePlaceholder: { es:'Escribí tu consulta o sugerencia…', en:'Type your question or suggestion…' },
-  soporteAdminLink: { es:'¿Sos el administrador/a de DeliberIA?', en:'Are you the DeliberIA administrator?' },
-
   // Panel de administración de soporte
   soporteAdminPinEyebrow: { es:'Panel de administración', en:'Admin panel' },
-  soporteAdminPinTitulo: { es:'PIN de administrador/a', en:'Admin PIN' },
-  soporteAdminPinSubNuevo: { es:'Si todavía nadie configuró un PIN para este panel, el que ingreses ahora va a quedar guardado como el único que funciona de acá en más — guardalo bien.', en:'If no one has set up a PIN for this panel yet, whatever you enter now will be saved as the only one that works from here on — keep it safe.' },
   soporteAdminPinLabel: { es:'PIN', en:'PIN' },
   soporteAdminTitulo: { es:'Consultas y sugerencias recibidas', en:'Questions and suggestions received' },
   soporteAdminGenerarSintesis: { es:'Generar / actualizar síntesis', en:'Generate / update summary' },
@@ -823,6 +821,9 @@ async function rawStorageDelete(key, shared){
 const API_BASE = 'https://deliberia-backend.joaquinlocati.workers.dev';
 const TURNSTILE_SITE_KEY = '0x4AAAAAAEjaO-3CEtTHLQ0U';
 const GOOGLE_CLIENT_ID = '394008066662-ft4onc16mfp7r2813ebv7d64795uddgk.apps.googleusercontent.com';
+// Solo decide si mostrar el link al panel en "Mi perfil" — la protección real la hace el
+// backend comparando la sesión de Google contra su propio ADMIN_EMAIL, no esta constante.
+const ADMIN_EMAIL = 'joaquinlocati@gmail.com';
 
 /* Login opcional con Google: la identidad vive en el backend (usuarios + sesiones), el
    token de sesión de este dispositivo se guarda en localStorage sin scope de grupo (a
@@ -1071,7 +1072,6 @@ function render(){
   if(state.view === 'mod-tema') return renderModTemaDetail();
   if(state.view === 'acerca') return renderAcerca();
   if(state.view === 'soporte-chat') return renderSoporteChat();
-  if(state.view === 'soporte-admin-pin') return renderSoporteAdminPin();
   if(state.view === 'soporte-admin') return renderSoporteAdmin();
 }
 
@@ -1114,9 +1114,6 @@ function renderSoporteChat(){
       </div>
       <div class="err">${esc(state.error)}</div>
     </div>
-    <div class="mod-access">
-      <a class="back" id="go-soporte-admin">${tr('soporteAdminLink')}</a>
-    </div>
   `;
   const logEl = document.getElementById('log');
   logEl.scrollTop = logEl.scrollHeight;
@@ -1130,35 +1127,6 @@ function renderSoporteChat(){
   };
   document.getElementById('send-btn').onclick = send;
   input.addEventListener('keydown', (e) => { if(e.key==='Enter' && !e.shiftKey){ e.preventDefault(); send(); }});
-  document.getElementById('go-soporte-admin').onclick = () => { state.view = 'soporte-admin-pin'; render(); };
-}
-
-function renderSoporteAdminPin(){
-  app.innerHTML = `
-    <a class="back" id="back">${tr('volver')}</a>
-    <p class="eyebrow" style="margin-top:18px;">${tr('soporteAdminPinEyebrow')}</p>
-    <h1 style="font-size:26px;">${tr('soporteAdminPinTitulo')}</h1>
-    <p class="sub">${tr('soporteAdminPinSubNuevo')}</p>
-    <div class="card">
-      <div class="field">
-        <label for="sa-pin">${tr('soporteAdminPinLabel')}</label>
-        <input type="text" id="sa-pin" placeholder="${tr('pinPlaceholder')}" maxlength="12" />
-      </div>
-      <button class="btn btn-primary" id="sa-entrar">${tr('entrar')}</button>
-      <div class="err" id="sa-err"></div>
-    </div>
-  `;
-  document.getElementById('back').onclick = () => { state.view='soporte-chat'; render(); };
-  const submit = async () => {
-    const v = document.getElementById('sa-pin').value.trim();
-    if(!v){ document.getElementById('sa-err').textContent = tr('ingresarUnPin'); return; }
-    const resultado = await apiPost('/admin/verificar-pin', { pin: v });
-    if(!resultado || !resultado.correcto){ document.getElementById('sa-err').textContent = (resultado && resultado.error) || tr('pinIncorrecto'); return; }
-    state.adminPin = v;
-    state.view = 'soporte-admin'; render();
-  };
-  document.getElementById('sa-entrar').onclick = submit;
-  document.getElementById('sa-pin').addEventListener('keydown', (e) => { if(e.key==='Enter') submit(); });
 }
 
 function renderPreviaGrupoCodigo(p){
@@ -1237,6 +1205,14 @@ function formatSoporteWordHtml(s){
 }
 
 function renderSoporteAdmin(){
+  if(!state.authToken || !state.authUserInfo || (state.authUserInfo.email || '').toLowerCase() !== ADMIN_EMAIL.toLowerCase()){
+    app.innerHTML = `
+      <a class="back" id="back">${tr('volver')}</a>
+      <p class="err" style="margin-top:18px;">${tr('adminSinAcceso')}</p>
+    `;
+    document.getElementById('back').onclick = () => { state.view='landing'; render(); };
+    return;
+  }
   app.innerHTML = `
     <a class="back" id="back">${tr('volver')}</a>
     <p class="eyebrow" style="margin-top:18px;">${tr('soporteAdminPinEyebrow')}</p>
@@ -1275,12 +1251,12 @@ function renderSoporteAdmin(){
   document.getElementById('back').onclick = () => { state.view='soporte-chat'; render(); };
   document.getElementById('calcular-monitoreo').onclick = async () => {
     state.busy = true; render();
-    state.monitoreoApp = await apiGet('/admin/monitoreo');
+    state.monitoreoApp = await apiGet('/admin/monitoreo?token=' + encodeURIComponent(state.authToken));
     state.busy = false; render();
   };
   document.getElementById('cargar-publicos').onclick = async () => {
     state.busy = true; render();
-    const m = await apiGet('/admin/monitoreo');
+    const m = await apiGet('/admin/monitoreo?token=' + encodeURIComponent(state.authToken));
     state.monitoreoApp = m;
     state.publicosAdmin = m.todosLosGrupos;
     state.mostrarPublicosAdminHasta = null;
@@ -1308,7 +1284,7 @@ function renderSoporteAdmin(){
   };
   const confirmarBtn = document.getElementById('confirmar-borrado-previa');
   armarConfirmacionDobleToque(confirmarBtn, async () => {
-    const resultado = await apiPost('/admin/grupos/' + encodeURIComponent(state.previaGrupoCodigo.codigo) + '/eliminar', { adminPin: state.adminPin || '' });
+    const resultado = await apiPost('/admin/grupos/' + encodeURIComponent(state.previaGrupoCodigo.codigo) + '/eliminar', { token: state.authToken });
     if(!resultado || resultado.error){
       state.adminGruposErr = (resultado && resultado.error) || tr('errorGeneracion');
       render();
@@ -1323,7 +1299,7 @@ function renderSoporteAdmin(){
   });
   document.querySelectorAll('.borrar-publico-btn').forEach(b => {
     armarConfirmacionDobleToque(b, async () => {
-      const resultado = await apiPost('/admin/grupos/' + encodeURIComponent(b.dataset.codigo) + '/eliminar', { adminPin: state.adminPin || '' });
+      const resultado = await apiPost('/admin/grupos/' + encodeURIComponent(b.dataset.codigo) + '/eliminar', { token: state.authToken });
       if(!resultado || resultado.error) return;
       state.publicosAdmin = (state.publicosAdmin || []).filter(g => g.codigo !== b.dataset.codigo);
       render();
@@ -1811,10 +1787,13 @@ async function renderMiPerfil(){
     <h1>${tr('perfilTitulo')}</h1>
     <p class="sub">${tr('googleConectadoComo')}${esc(state.authUserInfo ? (state.authUserInfo.nombre || '') : '')}${state.authUserInfo && state.authUserInfo.email ? ` (${esc(state.authUserInfo.email)})` : ''}</p>
     <button class="btn btn-ghost btn-sm" id="perfil-logout" style="margin-bottom:12px;">${tr('googleCerrarSesion')}</button>
+    ${state.authUserInfo && (state.authUserInfo.email || '').toLowerCase() === ADMIN_EMAIL.toLowerCase() ? `<p><a class="back" id="ir-panel-admin">${tr('perfilPanelAdmin')}</a></p>` : ''}
     <p class="footer-note">${tr('perfilMisGruposNota')}</p>
     <div id="perfil-grupos"><p class="empty">${tr('dirCargando')}</p></div>
   `;
   document.getElementById('back').onclick = () => { state.view = state.workspaceId ? 'role' : 'landing'; render(); };
+  const irPanelAdminBtn = document.getElementById('ir-panel-admin');
+  if(irPanelAdminBtn) irPanelAdminBtn.onclick = () => { state.view = 'soporte-admin'; render(); };
   document.getElementById('perfil-logout').onclick = async () => { await cerrarSesionGoogle(); state.view='landing'; render(); };
 
   const resultado = await apiGet('/mis-grupos?token=' + encodeURIComponent(state.authToken));
