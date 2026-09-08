@@ -98,6 +98,12 @@ function slugify(s) {
 
 const FRONTEND_URL = 'https://deliberia-app.pages.dev';
 const BACKEND_URL = 'https://deliberia-backend.joaquinlocati.workers.dev';
+// El "switch" del modelo de IA: para cambiarlo en el futuro alcanza con editar esta línea,
+// nada más del código lo referencia por nombre. Se probaron alternativas más baratas
+// (llama-3.3-70b-instruct-fp8-fast, ~5x más barato) pero mostraron respuestas degeneradas
+// de forma esporádica bajo uso real — se vuelve a este modelo hasta encontrar una opción
+// más barata que también sea estable.
+const MODELO_IA = '@cf/qwen/qwen3.8-27b';
 // Todas las llamadas a Workers AI pasan por acá para tener analíticas reales (requests,
 // tokens, costo en neuronas) en el dashboard de Cloudflare. skipCache porque cada charla
 // es distinta y no queremos que a alguien le llegue una respuesta cacheada de otra persona.
@@ -224,7 +230,7 @@ ${jsonTexto}
 
 async function traducirJSON(env, objeto, idioma, codigo) {
   try {
-    const respuestaIA = await env.AI.run('@cf/qwen/qwen3.8-27b', {
+    const respuestaIA = await env.AI.run(MODELO_IA, {
       messages: [{ role: 'user', content: promptTraducirJSON(idioma, JSON.stringify(objeto)) }]
     }, OPCIONES_AI_GATEWAY);
     await registrarUsoIA(env, codigo);
@@ -406,7 +412,7 @@ async function traducirTema(env, codigo, temaId, idiomaPedido) {
 
   let resultado;
   try {
-    const respuestaIA = await env.AI.run('@cf/qwen/qwen3.8-27b', {
+    const respuestaIA = await env.AI.run(MODELO_IA, {
       messages: [{ role: 'user', content: promptTraducirTema(idioma, contenidoTexto) }]
     }, OPCIONES_AI_GATEWAY);
     await registrarUsoIA(env, codigo);
@@ -732,7 +738,7 @@ async function chatearConTema(env, codigo, temaId, body, ip) {
 
   let texto;
   try {
-    const respuestaIA = await env.AI.run('@cf/qwen/qwen3.8-27b', { messages: mensajesIA }, OPCIONES_AI_GATEWAY);
+    const respuestaIA = await env.AI.run(MODELO_IA, { messages: mensajesIA }, OPCIONES_AI_GATEWAY);
     await registrarUsoIA(env, codigo);
     texto = extraerTextoIA(respuestaIA);
     if (!texto) throw new Error('respuesta vacía');
@@ -833,7 +839,7 @@ async function generarSintesisStreaming(env, ctx, codigo, temaId, idiomaPedido) 
 
   let stream;
   try {
-    stream = await env.AI.run('@cf/qwen/qwen3.8-27b', {
+    stream = await env.AI.run(MODELO_IA, {
       messages: [
         { role: 'system', content: promptSistemaSintesis(tema, idioma) },
         { role: 'user', content: 'Transcripciones a analizar:' + transcript }
@@ -927,7 +933,7 @@ async function generarPanoramaGrupoStreaming(env, ctx, codigo, idiomaPedido) {
 
   let stream;
   try {
-    stream = await env.AI.run('@cf/qwen/qwen3.8-27b', {
+    stream = await env.AI.run(MODELO_IA, {
       messages: [
         { role: 'system', content: promptSistemaPanoramaGrupo(grupo.nombre, idioma) },
         { role: 'user', content: 'Síntesis de los temas del grupo:' + cuerpo }
@@ -1451,7 +1457,7 @@ async function chatearSoporte(env, body) {
 
   let texto;
   try {
-    const respuestaIA = await env.AI.run('@cf/qwen/qwen3.8-27b', { messages: mensajesIA }, OPCIONES_AI_GATEWAY);
+    const respuestaIA = await env.AI.run(MODELO_IA, { messages: mensajesIA }, OPCIONES_AI_GATEWAY);
     await registrarUsoIA(env);
     texto = extraerTextoIA(respuestaIA);
     if (!texto) throw new Error('respuesta vacía');
@@ -1496,7 +1502,7 @@ async function generarSintesisSoporteStreaming(env, ctx, idiomaPedido) {
 
   let stream;
   try {
-    stream = await env.AI.run('@cf/qwen/qwen3.8-27b', {
+    stream = await env.AI.run(MODELO_IA, {
       messages: [
         { role: 'system', content: promptSistemaSintesisSoporte(idioma) },
         { role: 'user', content: 'Conversaciones de soporte a analizar:' + transcript }
@@ -1572,7 +1578,7 @@ async function handleRequest(request, env, ctx) {
     }
 
     if (url.pathname === '/test-ai') {
-      const respuesta = await env.AI.run('@cf/qwen/qwen3.8-27b', {
+      const respuesta = await env.AI.run(MODELO_IA, {
         messages: [
           { role: 'user', content: 'Respondé en una sola oración, en español: ¿qué es la deliberación colectiva?' }
         ]
