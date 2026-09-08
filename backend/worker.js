@@ -98,6 +98,10 @@ function slugify(s) {
 
 const FRONTEND_URL = 'https://deliberia-app.pages.dev';
 const BACKEND_URL = 'https://deliberia-backend.joaquinlocati.workers.dev';
+// Todas las llamadas a Workers AI pasan por acá para tener analíticas reales (requests,
+// tokens, costo en neuronas) en el dashboard de Cloudflare. skipCache porque cada charla
+// es distinta y no queremos que a alguien le llegue una respuesta cacheada de otra persona.
+const OPCIONES_AI_GATEWAY = { gateway: { id: 'deliberia', skipCache: true } };
 
 function extraerTextoIA(respuestaIA) {
   return (
@@ -222,7 +226,7 @@ async function traducirJSON(env, objeto, idioma, codigo) {
   try {
     const respuestaIA = await env.AI.run('@cf/qwen/qwen3.8-27b', {
       messages: [{ role: 'user', content: promptTraducirJSON(idioma, JSON.stringify(objeto)) }]
-    });
+    }, OPCIONES_AI_GATEWAY);
     await registrarUsoIA(env, codigo);
     const texto = extraerTextoIA(respuestaIA);
     if (!texto) return null;
@@ -404,7 +408,7 @@ async function traducirTema(env, codigo, temaId, idiomaPedido) {
   try {
     const respuestaIA = await env.AI.run('@cf/qwen/qwen3.8-27b', {
       messages: [{ role: 'user', content: promptTraducirTema(idioma, contenidoTexto) }]
-    });
+    }, OPCIONES_AI_GATEWAY);
     await registrarUsoIA(env, codigo);
     const texto = extraerTextoIA(respuestaIA);
     if (!texto) throw new Error('respuesta vacía');
@@ -728,7 +732,7 @@ async function chatearConTema(env, codigo, temaId, body, ip) {
 
   let texto;
   try {
-    const respuestaIA = await env.AI.run('@cf/qwen/qwen3.8-27b', { messages: mensajesIA });
+    const respuestaIA = await env.AI.run('@cf/qwen/qwen3.8-27b', { messages: mensajesIA }, OPCIONES_AI_GATEWAY);
     await registrarUsoIA(env, codigo);
     texto = extraerTextoIA(respuestaIA);
     if (!texto) throw new Error('respuesta vacía');
@@ -835,7 +839,7 @@ async function generarSintesisStreaming(env, ctx, codigo, temaId, idiomaPedido) 
         { role: 'user', content: 'Transcripciones a analizar:' + transcript }
       ],
       stream: true
-    });
+    }, OPCIONES_AI_GATEWAY);
     await registrarUsoIA(env, codigo);
   } catch (e) {
     return respuestaJson({ error: 'No se pudo generar la síntesis. Probá de nuevo.' }, 400);
@@ -929,7 +933,7 @@ async function generarPanoramaGrupoStreaming(env, ctx, codigo, idiomaPedido) {
         { role: 'user', content: 'Síntesis de los temas del grupo:' + cuerpo }
       ],
       stream: true
-    });
+    }, OPCIONES_AI_GATEWAY);
     await registrarUsoIA(env, codigo);
   } catch (e) {
     return respuestaJson({ error: 'No se pudo generar el panorama del grupo. Probá de nuevo.' }, 400);
@@ -1447,7 +1451,7 @@ async function chatearSoporte(env, body) {
 
   let texto;
   try {
-    const respuestaIA = await env.AI.run('@cf/qwen/qwen3.8-27b', { messages: mensajesIA });
+    const respuestaIA = await env.AI.run('@cf/qwen/qwen3.8-27b', { messages: mensajesIA }, OPCIONES_AI_GATEWAY);
     await registrarUsoIA(env);
     texto = extraerTextoIA(respuestaIA);
     if (!texto) throw new Error('respuesta vacía');
@@ -1498,7 +1502,7 @@ async function generarSintesisSoporteStreaming(env, ctx, idiomaPedido) {
         { role: 'user', content: 'Conversaciones de soporte a analizar:' + transcript }
       ],
       stream: true
-    });
+    }, OPCIONES_AI_GATEWAY);
     await registrarUsoIA(env);
   } catch (e) {
     return respuestaJson({ error: 'No se pudo generar la síntesis de soporte. Probá de nuevo.' }, 400);
@@ -1572,7 +1576,7 @@ async function handleRequest(request, env, ctx) {
         messages: [
           { role: 'user', content: 'Respondé en una sola oración, en español: ¿qué es la deliberación colectiva?' }
         ]
-      });
+      }, OPCIONES_AI_GATEWAY);
       return Response.json({ ok: true, respuesta });
     }
 
