@@ -302,10 +302,20 @@ const I18N = {
   monitoreoConsultasSoporte: { es:'consultas de soporte', en:'support inquiries' },
   monitoreoGrupoMasActivo: { es:'Grupo más activo:', en:'Most active group:' },
   monitoreoTemaMasActivo: { es:'Tema más activo:', en:'Most active topic:' },
+  monitoreoBusquedaWebHoy: { es:'Búsqueda web usada hoy (de todo el sitio):', en:'Web search used today (site-wide):' },
+  monitoreoSeguridadTitulo: { es:'Actividad de seguridad (últimas horas)', en:'Security activity (last few hours)' },
+  monitoreoBloqueadosActivos: { es:'bloqueados ahora mismo', en:'currently blocked' },
+  monitoreoRegistrosRecientes: { es:'registros recientes', en:'recent entries' },
   modGruposTitulo: { es:'Moderación de grupos', en:'Group moderation' },
   modGruposSub: { es:'Herramienta de emergencia contra spam o ataques — no para uso rutinario. Muestra todos los grupos creados (públicos y privados) para poder detectar y eliminar spam o inactividad sospechosa cuando haga falta.', en:'Emergency tool against spam or attacks — not for routine use. Shows every group created (public and private) so you can detect and delete spam or suspicious inactivity when needed.' },
   modGruposCargarTodos: { es:'Cargar grupos creados', en:'Load created groups' },
   modGruposSinActividad: { es:'sin actividad todavía', en:'no activity yet' },
+  modGruposCreadoPor: { es:'creado por: ', en:'created by: ' },
+  modGruposSinCreador: { es:'sin cuenta de Google asociada', en:'no Google account linked' },
+  backupTitulo: { es:'Backup de datos', en:'Data backup' },
+  backupSub: { es:'Descarga un archivo JSON con todos los grupos, temas, mensajes y demás datos de la app — un plan B por si algo sale mal.', en:'Download a JSON file with every group, topic, message, and other app data — a plan B in case something goes wrong.' },
+  backupDescargar: { es:'Descargar backup completo', en:'Download full backup' },
+  backupError: { es:'No se pudo descargar el backup. Probá de nuevo.', en:'Could not download the backup. Please try again.' },
   modGruposSinCargar: { es:'Todavía no cargaste la lista de grupos públicos.', en:'You haven\'t loaded the public groups list yet.' },
   modGruposSinPublicos: { es:'No hay grupos públicos todavía.', en:'There are no public groups yet.' },
   modGruposBorrarEsteGrupo: { es:'Eliminar este grupo', en:'Delete this group' },
@@ -1167,6 +1177,7 @@ function renderPublicosAdminContenido(lista){
         ${g.ultimaActividad ? `<span>${tr('pTopicsUltimaActividad')}${fechaCorta(g.ultimaActividad)}</span>` : `<span>${tr('modGruposSinActividad')}</span>`}
         <span>${g.cantidadTemas} ${tr('monitoreoTemas')}</span>
         <span>${g.participaciones} ${tr('monitoreoParticipaciones')}</span>
+        <span>${g.creadorEmail ? tr('modGruposCreadoPor') + esc(g.creadorEmail) : tr('modGruposSinCreador')}</span>
       </div>
       <div class="tema-actions" style="margin-top:12px;">
         <button class="btn btn-danger btn-sm borrar-publico-btn" data-codigo="${esc(g.codigo)}">${tr('modGruposBorrarEsteGrupo')}</button>
@@ -1224,6 +1235,13 @@ function renderSoporteAdmin(){
     </div>
 
     <div class="card">
+      <h3 style="font-family:'Fraunces',serif; color:var(--gold); margin-top:0;">${tr('backupTitulo')}</h3>
+      <p class="sub">${tr('backupSub')}</p>
+      <button class="btn btn-ghost btn-sm" id="descargar-backup">${tr('backupDescargar')}</button>
+      <div class="err" id="backup-err"></div>
+    </div>
+
+    <div class="card">
       <h3 style="font-family:'Fraunces',serif; color:var(--gold); margin-top:0;">${tr('modGruposTitulo')}</h3>
       <p class="sub">${tr('modGruposSub')}</p>
       <button class="btn btn-ghost btn-sm" id="cargar-publicos" ${state.busy?'disabled':''}>${state.busy ? tr('generando') : tr('modGruposCargarTodos')}</button>
@@ -1253,6 +1271,23 @@ function renderSoporteAdmin(){
     state.busy = true; render();
     state.monitoreoApp = await apiGet('/admin/monitoreo?token=' + encodeURIComponent(state.authToken));
     state.busy = false; render();
+  };
+  document.getElementById('descargar-backup').onclick = async () => {
+    const errEl = document.getElementById('backup-err');
+    errEl.textContent = '';
+    try{
+      const resp = await fetch(API_BASE + '/admin/backup?token=' + encodeURIComponent(state.authToken));
+      if(!resp.ok){ errEl.textContent = tr('backupError'); return; }
+      const blob = await resp.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `deliberia-backup-${Date.now()}.json`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }catch(e){
+      errEl.textContent = tr('backupError');
+    }
   };
   document.getElementById('cargar-publicos').onclick = async () => {
     state.busy = true; render();
@@ -1349,6 +1384,12 @@ function renderMonitoreoContenido(m){
     </div>
     ${m.grupoMasActivo ? `<p class="footer-note">${tr('monitoreoGrupoMasActivo')} <b>${esc(m.grupoMasActivo.nombre)}</b> (${m.grupoMasActivo.participaciones} ${tr('monitoreoParticipaciones')})</p>` : ''}
     ${m.temaMasActivo ? `<p class="footer-note">${tr('monitoreoTemaMasActivo')} <b>${esc(m.temaMasActivo.nombre)}</b> — ${esc(m.temaMasActivo.grupoNombre)} (${m.temaMasActivo.participaciones} ${tr('monitoreoParticipaciones')})</p>` : ''}
+    ${m.busquedaWebHoy ? `<p class="footer-note">${tr('monitoreoBusquedaWebHoy')} <b>${m.busquedaWebHoy.usado} / ${m.busquedaWebHoy.limite}</b></p>` : ''}
+    ${(m.actividadSeguridad && m.actividadSeguridad.length) ? `
+    <hr class="divider" />
+    <p class="eyebrow" style="margin-top:12px;">${tr('monitoreoSeguridadTitulo')}</p>
+    ${m.actividadSeguridad.map(a => `<p class="footer-note">${esc(a.etiqueta)}: <b>${a.bloqueadosActivos}</b> ${tr('monitoreoBloqueadosActivos')} (${a.totalClaves} ${tr('monitoreoRegistrosRecientes')})</p>`).join('')}
+    ` : ''}
   `;
 }
 

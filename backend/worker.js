@@ -1243,6 +1243,45 @@ async function eliminarGrupoAdmin(env, codigo, token) {
   return { ok: true };
 }
 
+// Categorías de rate_limits conocidas y su límite — la clave siempre arranca con
+// "<categoria>:...:<bucket>", así que basta con el primer segmento para reconocerla.
+const CATEGORIAS_RATE_LIMIT = {
+  pinfail: { limite: 5, etiqueta: 'Bloqueos de PIN (moderador, acceso o admin)' },
+  grupo_nuevo: { limite: 5, etiqueta: 'Creación de grupos' },
+  chat: { limite: 20, etiqueta: 'Mensajes de chat' },
+  busqueda_web_ip: { limite: 10, etiqueta: 'Búsqueda web (por IP)' }
+};
+
+async function obtenerActividadSeguridad(env) {
+  const { results } = await env.DB.prepare(
+    "SELECT clave, contador FROM rate_limits WHERE expira > ? LIMIT 3000"
+  ).bind(Date.now()).all();
+
+  const porCategoria = {};
+  for (const categoria of Object.keys(CATEGORIAS_RATE_LIMIT)) porCategoria[categoria] = { activos: 0, total: 0 };
+  for (const row of results) {
+    const categoria = row.clave.split(':')[0];
+    const info = CATEGORIAS_RATE_LIMIT[categoria];
+    if (!info) continue;
+    porCategoria[categoria].total++;
+    if (row.contador >= info.limite) porCategoria[categoria].activos++;
+  }
+
+  return Object.entries(CATEGORIAS_RATE_LIMIT).map(([categoria, info]) => ({
+    categoria, etiqueta: info.etiqueta,
+    bloqueadosActivos: porCategoria[categoria].activos,
+    totalClaves: porCategoria[categoria].total
+  }));
+}
+
+async function obtenerUsoBusquedaWebHoy(env) {
+  const ventanaMs = 24 * 60 * 60 * 1000;
+  const bucket = Math.floor(Date.now() / ventanaMs);
+  const row = await env.DB.prepare("SELECT contador FROM rate_limits WHERE clave = ?")
+    .bind(`busqueda_web_global:${bucket}`).first();
+  return { usado: (row && row.contador) || 0, limite: 300 };
+}
+
 async function obtenerMonitoreoAdmin(env, token) {
   const check = await esAdminGoogle(env, token);
   if (check.error) return check;
@@ -1271,16 +1310,20 @@ async function obtenerMonitoreoAdmin(env, token) {
   ).first();
 
   const { results: todosLosGrupos } = await env.DB.prepare(
-    `SELECT g.codigo, g.nombre, g.publico, g.creado,
+    `SELECT g.codigo, g.nombre, g.publico, g.creado, u.email AS creadorEmail,
             COUNT(DISTINCT t.id) AS cantidadTemas,
             MAX(t.ultima_actividad) AS ultimaActividad,
             COUNT(DISTINCT m.tema_id || ':' || m.participante_id) AS participaciones
      FROM grupos g
      LEFT JOIN temas t ON t.grupo_codigo = g.codigo
      LEFT JOIN mensajes m ON m.tema_id = t.id
+     LEFT JOIN usuarios u ON u.id = g.creador_usuario_id
      GROUP BY g.codigo
      ORDER BY g.creado DESC`
   ).all();
+
+  const actividadSeguridad = await obtenerActividadSeguridad(env);
+  const busquedaWebHoy = await obtenerUsoBusquedaWebHoy(env);
 
   return {
     totalGrupos: totales.totalGrupos,
@@ -1293,8 +1336,27 @@ async function obtenerMonitoreoAdmin(env, token) {
     totalConsultasSoporte: totales.totalConsultasSoporte,
     grupoMasActivo: grupoMasActivo || null,
     temaMasActivo: temaMasActivo || null,
-    todosLosGrupos: todosLosGrupos.map(g => ({ ...g, publico: !!g.publico }))
+    todosLosGrupos: todosLosGrupos.map(g => ({ ...g, publico: !!g.publico })),
+    actividadSeguridad,
+    busquedaWebHoy
   };
+}
+
+// Backup completo, sin paginar — a la escala actual de la app esto es liviano. Deja afuera
+// lo efímero/regenerable: sesiones (tokens hasheados que igual vencen solos), rate_limits
+// (contadores de corto plazo) y traducciones (cache que se reconstruye sola).
+async function generarBackup(env, token) {
+  const check = await esAdminGoogle(env, token);
+  if (check.error) return check;
+
+  const tablas = ['grupos', 'temas', 'participantes', 'mensajes', 'votos', 'sintesis',
+    'panorama_grupo', 'soporte_sesiones', 'soporte_mensajes', 'soporte_sintesis', 'usuarios'];
+  const backup = { generado: Date.now() };
+  for (const tabla of tablas) {
+    const { results } = await env.DB.prepare(`SELECT * FROM ${tabla}`).all();
+    backup[tabla] = results;
+  }
+  return backup;
 }
 
 function promptSistemaSoporte(idioma) {
@@ -1836,6 +1898,15 @@ async function handleRequest(request, env, ctx) {
       const resultado = await obtenerMonitoreoAdmin(env, token);
       if (resultado.error) return Response.json(resultado, { status: 401 });
       return Response.json(resultado);
+    }
+
+    if (url.pathname === '/admin/backup' && request.method === 'GET') {
+      const token = url.searchParams.get('token') || '';
+      const resultado = await generarBackup(env, token);
+      if (resultado.error) return Response.json(resultado, { status: 401 });
+      return Response.json(resultado, {
+        headers: { 'Content-Disposition': `attachment; filename="deliberia-backup-${Date.now()}.json"` }
+      });
     }
 
     {
