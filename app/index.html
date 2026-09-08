@@ -303,6 +303,12 @@ const I18N = {
   monitoreoGrupoMasActivo: { es:'Grupo más activo:', en:'Most active group:' },
   monitoreoTemaMasActivo: { es:'Tema más activo:', en:'Most active topic:' },
   monitoreoBusquedaWebHoy: { es:'Búsqueda web usada hoy (de todo el sitio):', en:'Web search used today (site-wide):' },
+  monitoreoIaTitulo: { es:'Uso de la IA', en:'AI usage' },
+  monitoreoIaUsoHoy: { es:'Llamados a la IA hoy (de todo el sitio):', en:'AI calls today (site-wide):' },
+  monitoreoIaLlamados: { es:'llamados', en:'calls' },
+  monitoreoIaCupoNota: { es:'Este número es un conteo propio (cantidad de llamados), no las "neuronas" reales que factura Cloudflare — para ese número exacto hay que mirar el dashboard de AI Gateway.', en:'This is our own count (number of calls), not the actual "neurons" Cloudflare bills — for that exact number, check the AI Gateway dashboard.' },
+  monitoreoIaRankingTitulo: { es:'Grupos que más usaron la IA hoy', en:'Groups that used the AI most today' },
+  monitoreoIaSinUso: { es:'Ningún grupo usó la IA todavía hoy.', en:'No group has used the AI yet today.' },
   monitoreoSeguridadTitulo: { es:'Actividad de seguridad (últimas horas)', en:'Security activity (last few hours)' },
   monitoreoBloqueadosActivos: { es:'bloqueados ahora mismo', en:'currently blocked' },
   monitoreoRegistrosRecientes: { es:'registros recientes', en:'recent entries' },
@@ -1385,6 +1391,17 @@ function renderMonitoreoContenido(m){
     ${m.grupoMasActivo ? `<p class="footer-note">${tr('monitoreoGrupoMasActivo')} <b>${esc(m.grupoMasActivo.nombre)}</b> (${m.grupoMasActivo.participaciones} ${tr('monitoreoParticipaciones')})</p>` : ''}
     ${m.temaMasActivo ? `<p class="footer-note">${tr('monitoreoTemaMasActivo')} <b>${esc(m.temaMasActivo.nombre)}</b> — ${esc(m.temaMasActivo.grupoNombre)} (${m.temaMasActivo.participaciones} ${tr('monitoreoParticipaciones')})</p>` : ''}
     ${m.busquedaWebHoy ? `<p class="footer-note">${tr('monitoreoBusquedaWebHoy')} <b>${m.busquedaWebHoy.usado} / ${m.busquedaWebHoy.limite}</b></p>` : ''}
+    ${(m.usoIAHoy !== undefined) ? `
+    <hr class="divider" />
+    <p class="eyebrow" style="margin-top:12px;">${tr('monitoreoIaTitulo')}</p>
+    <p class="footer-note">${tr('monitoreoIaUsoHoy')} <b>${m.usoIAHoy}</b> ${tr('monitoreoIaLlamados')}<br/>${tr('monitoreoIaCupoNota')}</p>
+    ${(m.rankingGruposIA && m.rankingGruposIA.length) ? `
+    <p class="footer-note" style="margin-top:10px;"><b>${tr('monitoreoIaRankingTitulo')}</b></p>
+    <ol style="margin:4px 0 0; padding-left:20px; font-size:13px; color:var(--ink-dim);">
+      ${m.rankingGruposIA.map(r => `<li>${esc(r.nombre)} — ${r.usos} ${tr('monitoreoIaLlamados')}</li>`).join('')}
+    </ol>
+    ` : `<p class="footer-note">${tr('monitoreoIaSinUso')}</p>`}
+    ` : ''}
     ${(m.actividadSeguridad && m.actividadSeguridad.length) ? `
     <hr class="divider" />
     <p class="eyebrow" style="margin-top:12px;">${tr('monitoreoSeguridadTitulo')}</p>

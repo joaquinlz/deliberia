@@ -147,6 +147,16 @@ async function chequearLimite(env, clave, limite, ventanaMs) {
   return row.contador <= limite;
 }
 
+// Conteo (no es un límite, nunca bloquea) de uso real de la IA — cuántas veces se llamó
+// hoy en total, y cuántas por grupo, para poder verlo en el panel de admin. Reusa
+// chequearLimite con un límite infinito porque el mecanismo de incrementar-por-ventana
+// ya es exactamente lo que hace falta acá.
+async function registrarUsoIA(env, codigo) {
+  const ventanaMs = 24 * 60 * 60 * 1000;
+  await chequearLimite(env, 'ia_uso_total', Infinity, ventanaMs);
+  if (codigo) await chequearLimite(env, `ia_uso_grupo:${codigo}`, Infinity, ventanaMs);
+}
+
 // Bloqueo por intentos fallidos de PIN: a diferencia de chequearLimite, acá solo se
 // suma en los intentos que fallan (uno correcto no cuenta), y se puede consultar sin sumar.
 async function pinBloqueado(env, clave, limite, ventanaMs) {
@@ -208,11 +218,12 @@ ${jsonTexto}
 <<<FIN JSON>>>`;
 }
 
-async function traducirJSON(env, objeto, idioma) {
+async function traducirJSON(env, objeto, idioma, codigo) {
   try {
     const respuestaIA = await env.AI.run('@cf/qwen/qwen3.8-27b', {
       messages: [{ role: 'user', content: promptTraducirJSON(idioma, JSON.stringify(objeto)) }]
     });
+    await registrarUsoIA(env, codigo);
     const texto = extraerTextoIA(respuestaIA);
     if (!texto) return null;
     return JSON.parse(texto.replace(/```json|```/g, '').trim());
@@ -394,6 +405,7 @@ async function traducirTema(env, codigo, temaId, idiomaPedido) {
     const respuestaIA = await env.AI.run('@cf/qwen/qwen3.8-27b', {
       messages: [{ role: 'user', content: promptTraducirTema(idioma, contenidoTexto) }]
     });
+    await registrarUsoIA(env, codigo);
     const texto = extraerTextoIA(respuestaIA);
     if (!texto) throw new Error('respuesta vacía');
     const parsed = JSON.parse(texto.replace(/```json|```/g, '').trim());
@@ -717,6 +729,7 @@ async function chatearConTema(env, codigo, temaId, body, ip) {
   let texto;
   try {
     const respuestaIA = await env.AI.run('@cf/qwen/qwen3.8-27b', { messages: mensajesIA });
+    await registrarUsoIA(env, codigo);
     texto = extraerTextoIA(respuestaIA);
     if (!texto) throw new Error('respuesta vacía');
   } catch (e) {
@@ -823,6 +836,7 @@ async function generarSintesisStreaming(env, ctx, codigo, temaId, idiomaPedido) 
       ],
       stream: true
     });
+    await registrarUsoIA(env, codigo);
   } catch (e) {
     return respuestaJson({ error: 'No se pudo generar la síntesis. Probá de nuevo.' }, 400);
   }
@@ -867,7 +881,7 @@ async function traducirSintesisTema(env, codigo, temaId, idiomaPedido) {
   const cache = await obtenerTraduccionCache(env, 'sintesis', temaId, idioma);
   if (cache) return { ...cache, creado: row.creado };
 
-  const traducido = await traducirJSON(env, JSON.parse(row.contenido), idioma);
+  const traducido = await traducirJSON(env, JSON.parse(row.contenido), idioma, codigo);
   if (!traducido) return { error: 'No se pudo traducir la síntesis. Probá de nuevo.' };
   await guardarTraduccionCache(env, 'sintesis', temaId, idioma, traducido);
   return { ...traducido, creado: row.creado };
@@ -916,6 +930,7 @@ async function generarPanoramaGrupoStreaming(env, ctx, codigo, idiomaPedido) {
       ],
       stream: true
     });
+    await registrarUsoIA(env, codigo);
   } catch (e) {
     return respuestaJson({ error: 'No se pudo generar el panorama del grupo. Probá de nuevo.' }, 400);
   }
@@ -954,7 +969,7 @@ async function traducirPanoramaGrupo(env, codigo, idiomaPedido) {
   const cache = await obtenerTraduccionCache(env, 'panorama_grupo', codigo, idioma);
   if (cache) return { ...cache, creado: row.creado };
 
-  const traducido = await traducirJSON(env, JSON.parse(row.contenido), idioma);
+  const traducido = await traducirJSON(env, JSON.parse(row.contenido), idioma, codigo);
   if (!traducido) return { error: 'No se pudo traducir el panorama del grupo. Probá de nuevo.' };
   await guardarTraduccionCache(env, 'panorama_grupo', codigo, idioma, traducido);
   return { ...traducido, creado: row.creado };
@@ -1274,6 +1289,26 @@ async function obtenerActividadSeguridad(env) {
   }));
 }
 
+async function obtenerUsoIAHoy(env) {
+  const bucket = Math.floor(Date.now() / (24 * 60 * 60 * 1000));
+  const row = await env.DB.prepare("SELECT contador FROM rate_limits WHERE clave = ?")
+    .bind(`ia_uso_total:${bucket}`).first();
+  return (row && row.contador) || 0;
+}
+
+async function obtenerRankingGruposIA(env, limite) {
+  const bucketHoy = Math.floor(Date.now() / (24 * 60 * 60 * 1000));
+  const { results } = await env.DB.prepare("SELECT clave, contador FROM rate_limits WHERE clave LIKE 'ia_uso_grupo:%'").all();
+  const filtrados = [];
+  for (const r of results) {
+    const partes = r.clave.split(':');
+    if (Number(partes[partes.length - 1]) !== bucketHoy) continue;
+    filtrados.push({ codigo: partes.slice(1, -1).join(':'), usos: r.contador });
+  }
+  filtrados.sort((a, b) => b.usos - a.usos);
+  return filtrados.slice(0, limite || 10);
+}
+
 async function obtenerUsoBusquedaWebHoy(env) {
   const ventanaMs = 24 * 60 * 60 * 1000;
   const bucket = Math.floor(Date.now() / ventanaMs);
@@ -1324,6 +1359,10 @@ async function obtenerMonitoreoAdmin(env, token) {
 
   const actividadSeguridad = await obtenerActividadSeguridad(env);
   const busquedaWebHoy = await obtenerUsoBusquedaWebHoy(env);
+  const usoIAHoy = await obtenerUsoIAHoy(env);
+  const nombresPorCodigo = Object.fromEntries(todosLosGrupos.map(g => [g.codigo, g.nombre]));
+  const rankingGruposIA = (await obtenerRankingGruposIA(env, 10))
+    .map(r => ({ ...r, nombre: nombresPorCodigo[r.codigo] || r.codigo }));
 
   return {
     totalGrupos: totales.totalGrupos,
@@ -1338,7 +1377,9 @@ async function obtenerMonitoreoAdmin(env, token) {
     temaMasActivo: temaMasActivo || null,
     todosLosGrupos: todosLosGrupos.map(g => ({ ...g, publico: !!g.publico })),
     actividadSeguridad,
-    busquedaWebHoy
+    busquedaWebHoy,
+    usoIAHoy,
+    rankingGruposIA
   };
 }
 
@@ -1407,6 +1448,7 @@ async function chatearSoporte(env, body) {
   let texto;
   try {
     const respuestaIA = await env.AI.run('@cf/qwen/qwen3.8-27b', { messages: mensajesIA });
+    await registrarUsoIA(env);
     texto = extraerTextoIA(respuestaIA);
     if (!texto) throw new Error('respuesta vacía');
   } catch (e) {
@@ -1457,6 +1499,7 @@ async function generarSintesisSoporteStreaming(env, ctx, idiomaPedido) {
       ],
       stream: true
     });
+    await registrarUsoIA(env);
   } catch (e) {
     return respuestaJson({ error: 'No se pudo generar la síntesis de soporte. Probá de nuevo.' }, 400);
   }
