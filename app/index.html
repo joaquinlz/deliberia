@@ -208,7 +208,7 @@
   .btn-cta{ width:100%; justify-content:center; padding:17px 22px; font-size:16px; margin-bottom:10px; }
   .mod-access{ margin-top:44px; padding-top:20px; border-top:1px solid var(--line); text-align:center; }
   #lang-switch-wrap{
-    max-width: 720px; margin: 0 auto; padding: 18px 24px 0; display:flex; justify-content:flex-end;
+    max-width: 720px; margin: 0 auto; padding: 18px 24px 0; display:flex; justify-content:space-between; align-items:center;
   }
   #lang-switch{
     font-family:'IBM Plex Mono',monospace; font-size:12px; font-weight:700; letter-spacing:.05em;
@@ -218,12 +218,23 @@
   #lang-switch span{ cursor:pointer; padding:2px 3px; color: var(--ink-dim); }
   #lang-switch span.active{ color: var(--gold); }
   #lang-switch .sep{ color: var(--line); cursor:default; }
-  @media (max-width:420px){ #lang-switch{ font-size:11px; padding:5px 10px; } }
+  #perfil-link-top{
+    font-family:'IBM Plex Mono',monospace; font-size:12px; font-weight:700; letter-spacing:.05em;
+    color: var(--ink-dim); cursor:pointer; display:flex; gap:6px; align-items:center;
+    background: var(--bg-raised); border:1px solid var(--line); border-radius:20px; padding:6px 12px;
+  }
+  #perfil-link-top:hover{ color: var(--teal); }
+  #perfil-link-top svg{ width:14px; height:14px; flex-shrink:0; }
+  @media (max-width:420px){ #lang-switch{ font-size:11px; padding:5px 10px; } #perfil-link-top{ font-size:11px; padding:5px 10px; } }
 </style>
 <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
 </head>
 <body>
 <div id="lang-switch-wrap">
+  <div id="perfil-link-top" onclick="irAMiPerfil()">
+    <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="7" r="4"/><path d="M12 13c-5 0-9 2.5-9 6v1h18v-1c0-3.5-4-6-9-6z"/></svg>
+    <span id="perfil-link-top-texto">Mi perfil</span>
+  </div>
   <div id="lang-switch">
     <span id="lang-es" onclick="setLang('es')">ES</span>
     <span class="sep">/</span>
@@ -693,6 +704,13 @@ function pintarLangSwitch(){
   if(!es || !en) return;
   es.className = state.lang === 'es' ? 'active' : '';
   en.className = state.lang === 'en' ? 'active' : '';
+  const perfilTexto = document.getElementById('perfil-link-top-texto');
+  if(perfilTexto) perfilTexto.textContent = tr('perfilTitulo');
+}
+
+function irAMiPerfil(){
+  state.view = 'mi-perfil';
+  render();
 }
 
 async function setLang(lang){
@@ -1535,15 +1553,12 @@ async function renderLanding(){
     </div>
 
     <div class="mod-access">
-      ${state.authToken ? `<a class="back" id="ir-mi-perfil">${tr('perfilTitulo')}</a><br/>` : ''}
       <a class="back" id="go-acerca">${tr('landAcercaDe')}</a>
       <br/><a class="back" id="go-soporte" style="margin-top:10px; display:inline-block;">${tr('landConsultas')}</a>
     </div>
   `;
   document.getElementById('ir-crear').onclick = () => { state.errorLanding=''; state.view = 'crear-espacio'; render(); };
   document.getElementById('ir-directorio').onclick = () => { state.view = 'directorio-grupos'; render(); };
-  const irMiPerfilBtn = document.getElementById('ir-mi-perfil');
-  if(irMiPerfilBtn) irMiPerfilBtn.onclick = () => { state.view = 'mi-perfil'; render(); };
   document.getElementById('go-soporte').onclick = async () => {
     state.soporteMessages = [];
     state.soporteId = null;
@@ -2011,7 +2026,6 @@ function renderRole(){
       <a class="back" id="go-moderator">${tr('roleModerador')}</a>
       <br/><a class="back" id="go-acerca" style="margin-top:10px; display:inline-block;">${tr('landAcercaDe')}</a>
       <br/><a class="back" id="go-landing" style="margin-top:10px; display:inline-block;">${tr('roleCambiarGrupo')}</a>
-      ${state.authToken ? `<br/><a class="back" id="ir-mi-perfil" style="margin-top:10px; display:inline-block;">${tr('perfilTitulo')}</a>` : ''}
     </div>
   `;
   document.getElementById('go-participant').onclick = async () => {
@@ -2043,8 +2057,6 @@ function renderRole(){
   document.getElementById('go-moderator').onclick = () => { state.view = 'mod-pin'; render(); };
   document.getElementById('go-acerca').onclick = () => { state.view = 'acerca'; render(); };
   document.getElementById('go-landing').onclick = () => { location.hash = ''; state.workspaceId = null; state.workspaceMeta = null; state.view = 'landing'; render(); };
-  const irMiPerfilBtn = document.getElementById('ir-mi-perfil');
-  if(irMiPerfilBtn) irMiPerfilBtn.onclick = () => { state.view = 'mi-perfil'; render(); };
 }
 
 /* ---------- PARTICIPANT: TOPIC LIST ---------- */
